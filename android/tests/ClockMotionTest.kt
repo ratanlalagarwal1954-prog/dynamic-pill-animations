@@ -4,6 +4,15 @@ import kotlin.math.abs
 
 /** Run with kotlinc ClockTimeline.kt Spring.kt ClockMotionTest.kt -include-runtime -d tests.jar. */
 fun main() {
+    val fit = IslandFit(scale = 2f, pillWidth = 2f, offsetX = -900f, offsetY = 900f).safe()
+    check(fit.scale == 1.3f && fit.pillWidth == 1.5f)
+    check(fit.offsetX == -180f && fit.offsetY == 160f)
+    check(IslandFit().safe() == IslandFit())
+    // Compact and expanded islands cannot disappear past either edge on narrow phones.
+    check(IslandFit.center(360f, 214f, 0f, 4f) == 111f)
+    check(IslandFit.center(360f, 214f, 500f, 4f) == 249f)
+    check(IslandFit.center(360f, 344f, 40f, 4f) == 176f)
+    check(IslandFit.center(360f, 400f, 500f, 4f) == 180f)
     check(ClockTimeline.parseRemaining("Time left 9:00") == 540_000L)
     check(ClockTimeline.parseRemaining("1:02:03 remaining") == 3_723_000L)
     check(ClockTimeline.parseRemaining("Timer paused") == null)
@@ -28,5 +37,5 @@ fun main() {
     check(spring.value.isFinite() && spring.value in 0f..180f)
     repeat(240) { spring.step(1f / 120f) }
     check(spring.isAtRest && abs(spring.value - 34f) < 0.5f)
-    println("Clock countdown and interrupted spring regressions passed")
+    println("Phone fit, countdown and interrupted spring regressions passed")
 }

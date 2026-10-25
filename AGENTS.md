@@ -15,3 +15,5 @@
 - Keep the overlay window full-width with state-sized height so its horizontal drawing origin never jumps during WindowManager relayout.
 - ClockTimeline owns platform-independent duration parsing, rounding and tick rules; LiveActivity converts notification wall-clock bases to monotonic deadlines so phone clock changes do not shift live countdowns.
 - Clock data refreshes must not restart presentation timeouts, and user interactions must interrupt delayed timer frames immediately.
+- Store device-only island calibration in SharedPreferences through IslandPreferences; IslandFit owns safe bounds, and IslandView scales both drawing and touch coordinates together so controls follow the resized island.
+- NothingStyle owns native UI theme values and DotHeading renders original local dot lettering; never bundle proprietary phone-brand fonts or logos.

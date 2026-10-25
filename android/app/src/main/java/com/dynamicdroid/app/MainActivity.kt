@@ -22,6 +22,9 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import android.widget.SeekBar
+import androidx.appcompat.widget.SwitchCompat
+import android.content.res.ColorStateList
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
@@ -32,9 +35,13 @@ class MainActivity : AppCompatActivity() {
     private var demo: LiveActivity? = null
     private var demoPresentation = Presentation.EXPANDED
     private val buttons = HashMap<String, Button>()
+    private var fit = IslandFit()
+    private val fitSliders = ArrayList<SeekBar>()
+    private var cameraSwitch: SwitchCompat? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        fit = IslandPreferences.read(this)
         window.statusBarColor = BG
         setContentView(buildScreen())
         if (Build.VERSION.SDK_INT >= 33) notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
@@ -74,12 +81,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun demoMusic(playing: Boolean, position: Long = 107_000L): LiveActivity {
-        val art = gradientArt(Color.rgb(255, 94, 98), Color.rgb(80, 40, 160))
+        val art = gradientArt(NothingStyle.red, NothingStyle.surface)
         return LiveActivity(
             key = "demo-music", packageName = "com.spotify.music", mode = IslandMode.MUSIC,
             title = "Midnight City", subtitle = "M83", appLabel = "Spotify",
             appIcon = AppStyle.icon(this, "com.spotify.music"), artwork = art,
-            accent = AppStyle.fromBitmap(art) ?: AppStyle.DEFAULT_ACCENT,
+            accent = NothingStyle.foreground,
             isPlaying = playing, positionMs = position, positionUpdatedAt = SystemClock.elapsedRealtime(), durationMs = 243_000L,
         )
     }
@@ -128,35 +135,49 @@ class MainActivity : AppCompatActivity() {
     // ---------------------------------------------------------------- screen
 
     private fun buildScreen(): ScrollView {
-        val pad = dp(24)
+        val pad = dp(20)
         val column = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(pad, dp(40), pad, pad)
+            setPadding(pad, dp(20), pad, pad)
         }
+        column.addView(label("( 01 )  DROID / NOTHING INSPIRED", 11f, NothingStyle.red), row(-2))
+        column.addView(DotHeading(this), row(dp(64)))
         preview = IslandView(this).apply {
             anchorToCutout = false
             callbacks = previewCallbacks
+            applyFit(fit.copy(offsetY = 0f))
         }
-        column.addView(FrameLayout(this).apply { addView(preview, FrameLayout.LayoutParams(-1, -1)) }, row(dp(200)))
-        column.addView(label("Try it: double-tap or long-press to expand, swipe up to shrink, tap to open.", 12f, MUTED).apply {
-            gravity = Gravity.CENTER
-        }, row(ViewGroup.LayoutParams.WRAP_CONTENT))
+        column.addView(FrameLayout(this).apply { addView(preview, FrameLayout.LayoutParams(-1, -1)) }, row(dp(270)))
         val chips = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
         chips.addView(chip("Music") { showDemo(demoMusic(true), Presentation.EXPANDED) })
-        chips.addView(chip("WhatsApp") { showDemo(demoMessage(), Presentation.EXPANDED) })
+        chips.addView(chip("Chat") { showDemo(demoMessage(), Presentation.EXPANDED) })
         chips.addView(chip("Call") { showDemo(demoCall(), Presentation.EXPANDED) })
         chips.addView(chip("Timer") { showDemo(demoTimer(), Presentation.EXPANDED) })
         column.addView(chips, row(dp(44)).apply { topMargin = dp(14) })
 
-        column.addView(label("Your day,\nat a glance.", 40f, Color.WHITE).apply {
-            gravity = Gravity.CENTER
-            typeface = android.graphics.Typeface.DEFAULT_BOLD
-        }, row(ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(28) })
-        column.addView(label("Turn on the permissions below and the island goes live over every app.", 14f, MUTED).apply {
-            gravity = Gravity.CENTER
-            setLineSpacing(0f, 1.3f)
-        }, row(ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(14) })
+        column.addView(label("( 02 )  PHONE FIT", 13f, NothingStyle.red), row(-2).apply { topMargin = dp(24) })
+        column.addView(fitControl("Size", 70, 130, (fit.scale * 100).toInt(), "%") { fit = fit.copy(scale = it / 100f); updateFit() }, row(-2))
+        column.addView(fitControl("Pill width", 70, 150, (fit.pillWidth * 100).toInt(), "%") { fit = fit.copy(pillWidth = it / 100f); updateFit() }, row(-2))
+        column.addView(fitControl("Left / right", -180, 180, fit.offsetX.toInt(), "dp") { fit = fit.copy(offsetX = it.toFloat()); updateFit() }, row(-2))
+        column.addView(fitControl("Up / down", -24, 160, fit.offsetY.toInt(), "dp") { fit = fit.copy(offsetY = it.toFloat()); updateFit() }, row(-2))
+        cameraSwitch = SwitchCompat(this).apply {
+            text = "Align with camera"
+            setTextColor(NothingStyle.foreground)
+            typeface = NothingStyle.mono
+            isChecked = fit.alignCamera
+            buttonTintList = ColorStateList.valueOf(NothingStyle.red)
+            setOnCheckedChangeListener { _, checked -> fit = fit.copy(alignCamera = checked); updateFit() }
+        }
+        column.addView(cameraSwitch, row(dp(56)))
+        column.addView(action("reset", "↺  Reset phone fit") {
+            fit = IslandFit()
+            val defaults = listOf(30, 30, 180, 24)
+            fitSliders.forEachIndexed { index, slider -> slider.progress = defaults[index] }
+            cameraSwitch?.isChecked = true
+            updateFit()
+        }, row(dp(54)))
+        column.addView(label("( 03 )  CONNECTIONS", 13f, NothingStyle.red), row(-2).apply { topMargin = dp(28) })
 
         column.addView(action("overlay", "Allow display over other apps") {
             if (!Settings.canDrawOverlays(this)) {
@@ -184,8 +205,9 @@ class MainActivity : AppCompatActivity() {
         this.text = text
         isAllCaps = false
         textSize = 13f
-        setTextColor(Color.WHITE)
-        background = ContextCompat.getDrawable(context, android.R.drawable.btn_default)?.mutate()?.apply { setTint(SURFACE) }
+        setTextColor(NothingStyle.foreground)
+        typeface = NothingStyle.mono
+        background = NothingStyle.panel()
         setOnClickListener { click() }
         layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply {
             marginStart = dp(3); marginEnd = dp(3)
@@ -196,8 +218,9 @@ class MainActivity : AppCompatActivity() {
         this.text = text
         isAllCaps = false
         textSize = 15f
-        setTextColor(Color.BLACK)
-        background = ContextCompat.getDrawable(context, android.R.drawable.btn_default)?.mutate()?.apply { setTint(Color.WHITE) }
+        setTextColor(NothingStyle.foreground)
+        typeface = NothingStyle.mono
+        background = NothingStyle.panel()
         setOnClickListener { click() }
         buttons[key] = this
     }
@@ -206,6 +229,41 @@ class MainActivity : AppCompatActivity() {
         this.text = text
         textSize = size
         setTextColor(color)
+        typeface = NothingStyle.mono
+    }
+
+    private fun fitControl(name: String, min: Int, max: Int, value: Int, unit: String, change: (Int) -> Unit): LinearLayout {
+        val title = label("$name  ·  $value$unit", 13f, NothingStyle.foreground)
+        val slider = SeekBar(this).apply {
+            this.max = max - min
+            progress = value - min
+            contentDescription = name
+            progressTintList = ColorStateList.valueOf(NothingStyle.red)
+            thumbTintList = ColorStateList.valueOf(NothingStyle.foreground)
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                    title.text = "$name  ·  ${progress + min}$unit"
+                    if (fromUser) change(progress + min)
+                }
+                override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+                override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+            })
+        }
+        fitSliders.add(slider)
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, dp(16), 0, 0)
+            addView(title, row(-2))
+            addView(slider, row(dp(48)))
+        }
+    }
+
+    private fun updateFit() {
+        IslandPreferences.save(this, fit)
+        preview.applyFit(fit.copy(offsetY = 0f))
+        if (Settings.canDrawOverlays(this) || IslandAccessibilityService.isEnabled(this)) {
+            ContextCompat.startForegroundService(this, Intent(this, IslandOverlayService::class.java).setAction(IslandOverlayService.ACTION_FIT))
+        }
     }
 
     private fun toast(text: String) = Toast.makeText(this, text, Toast.LENGTH_SHORT).show()
@@ -217,8 +275,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     companion object {
-        private val BG = Color.rgb(9, 10, 12)
-        private val SURFACE = Color.rgb(32, 33, 38)
-        private val MUTED = Color.rgb(145, 148, 157)
+        private val BG = NothingStyle.background
+        private val SURFACE = NothingStyle.surface
+        private val MUTED = NothingStyle.muted
     }
 }
