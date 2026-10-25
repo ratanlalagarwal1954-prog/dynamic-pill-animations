@@ -77,6 +77,20 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         invalidate()
     }
 
+    // Wallpaper theme: the island stays monochrome, but accents (timer ring, waves,
+    // progress, supporting buttons) take the wallpaper's colours when enabled.
+    private var accent = NothingStyle.red
+    private var accentSoft = NothingStyle.muted
+    private var waveColor = NothingStyle.foreground
+
+    fun applyTheme(theme: IslandTheme) {
+        val t = theme.safe()
+        accent = if (t.enabled) t.accent else NothingStyle.red
+        accentSoft = if (t.enabled) t.secondary else NothingStyle.muted
+        waveColor = if (t.enabled) t.accent else NothingStyle.foreground
+        invalidate()
+    }
+
     private fun updateAnchor() {
         val physicalTop = if (anchorToCutout && fit.alignCamera) cameraTop ?: dp(8f) else dp(8f)
         baseTop = max(0f, physicalTop + dp(fit.offsetY)) / fit.scale
@@ -294,7 +308,9 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
     fun windowSizeFor(next: LiveActivity?, p: Presentation): Pair<Int, Int> {
         val spec = specFor(if (next == null) Presentation.IDLE else p, next)
         // A fixed horizontal origin avoids one-frame jumps when WindowManager relayouts.
-        return Pair(resources.displayMetrics.widthPixels, ((baseTop + spec.h + dp(46f)) * fit.scale).toInt())
+        // Keep the bottom slack tiny: the window eats touches wherever it covers, so a tall
+        // idle window would deaden a strip of the screen under the island.
+        return Pair(resources.displayMetrics.widthPixels, ((baseTop + spec.h + dp(14f)) * fit.scale).toInt())
     }
 
     val isAbsorbing: Boolean get() = absorbS.value > 0.002f
