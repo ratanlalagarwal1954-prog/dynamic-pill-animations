@@ -67,21 +67,24 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
 
     private var baseTop = dp(8f)
 
-    // Shape
-    private val widthS = Spring(dp(104f), 430f, 0.76f, 0.5f)
-    private val heightS = Spring(dp(32f), 430f, 0.8f, 0.5f)
-    private val radiusS = Spring(dp(16f), 430f, 0.9f, 0.5f)
-    private val topS = Spring(baseTop, 400f, 0.86f, 0.5f)
+    // Shape. Softer, slower springs (~0.5s response) with a touch of bounce, like iOS.
+    private val widthS = Spring(dp(104f), SHAPE_K, WIDTH_DAMP, 0.5f)
+    private val heightS = Spring(dp(32f), SHAPE_K, HEIGHT_DAMP, 0.5f)
+    private val radiusS = Spring(dp(16f), SHAPE_K, 0.9f, 0.5f)
+    private val topS = Spring(baseTop, SHAPE_K, 0.86f, 0.5f)
     // Content and gesture feedback
-    private val expandedA = Spring(0f, 240f, 1f, 0.004f)
-    private val compactA = Spring(0f, 320f, 1f, 0.004f)
-    private val pressS = Spring(1f, 700f, 0.62f, 0.0008f)
-    private val stretchS = Spring(0f, 520f, 0.68f, 0.5f)
-    private val absorbS = Spring(0f, 150f, 1f, 0.004f)
+    private val expandedA = Spring(0f, CONTENT_IN_K, 1f, 0.004f)
+    private val compactA = Spring(0f, CONTENT_IN_K, 1f, 0.004f)
+    private val pressS = Spring(1f, 520f, 0.6f, 0.0008f)
+    private val stretchS = Spring(0f, 360f, 0.62f, 0.5f)
+    private val absorbS = Spring(0f, 120f, 1f, 0.004f)
     // Wake/unlock intro: 0 = hidden dot, 1 = fully present
-    private val introS = Spring(1f, 210f, 0.62f, 0.002f)
-    // Sheen that sweeps across the pill once the intro lands (0..1 position, >1 = done)
+    private val introS = Spring(1f, 160f, 0.7f, 0.002f)
+    // Sheen that sweeps across the pill once the intro lands
     private var sheenStart = 0L
+    // While the intro's first stage (dot -> circle) runs, show() must not widen the shape yet.
+    private var introHoldUntil = 0L
+    private val introWiden = Runnable { widenIntro() }
     private val shapeSprings = listOf(widthS, heightS, radiusS, topS)
     private val springs = listOf(widthS, heightS, radiusS, topS, expandedA, compactA, pressS, stretchS, absorbS, introS)
 
@@ -97,6 +100,17 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
     private val letterPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
         typeface = Typeface.DEFAULT_BOLD; textAlign = Paint.Align.CENTER
     }
+    // Timer digits: tabular figures so the numbers don't wobble as they tick.
+    private val digitPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { typeface = medium; fontFeatureSettings = "tnum" }
+    private val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND }
+    private val arcRect = RectF()
+
+    // Timer live state: rolling digits and the ring's total duration per timer
+    private var rollKey: String? = null
+    private var rollText = ""
+    private var rollPrev = ""
+    private var rollAt = 0L
+    private val timerTotals = HashMap<String, Long>()
 
     private val rect = RectF()
     private val hit = RectF()
@@ -159,9 +173,13 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         val p = if (next == null) Presentation.IDLE else nextPresentation
         activity = next
         presentation = p
+        refreshContentDescription()
+        // Mid-intro: the widen stage picks up the latest state itself.
+        if (!absorb && SystemClock.uptimeMillis() < introHoldUntil) return
         val spec = specFor(p, next)
 
         if (absorb && next != null) {
+            removeCallbacks(introWiden); introHoldUntil = 0L; introS.snap(1f)
             val dm = resources.displayMetrics
             widthS.snap(dm.widthPixels * 0.84f)
             heightS.snap(dm.heightPixels * 0.58f)
@@ -170,40 +188,78 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
             absorbS.snap(1f)
             compactA.snap(0f)
             expandedA.snap(0f)
-            shapeSprings.forEach { it.stiffness = 170f; it.dampingRatio = 0.84f }
+            shapeSprings.forEach { it.stiffness = 120f; it.dampingRatio = 0.82f }
         }
         widthS.target = spec.w
         heightS.target = spec.h
         radiusS.target = spec.r
         topS.target = baseTop
         absorbS.target = 0f
-        expandedA.target = if (p == Presentation.EXPANDED) 1f else 0f
-        compactA.target = if (p == Presentation.COMPACT) 1f else 0f
-        refreshContentDescription()
+        setContentTargets(p)
         settled = false
         kick()
     }
 
+    /** Content fades in slowly once the shape has room, and fades out fast so it never squashes. */
+    private fun setContentTargets(p: Presentation) {
+        expandedA.target = if (p == Presentation.EXPANDED) 1f else 0f
+        expandedA.stiffness = if (p == Presentation.EXPANDED) CONTENT_IN_K else CONTENT_OUT_K
+        compactA.target = if (p == Presentation.COMPACT) 1f else 0f
+        compactA.stiffness = if (p == Presentation.COMPACT) CONTENT_IN_K else CONTENT_OUT_K
+    }
+
+    /** Screen went off: collapse into an invisible dot so the next wake can grow out of it. */
+    fun hideForIntro() {
+        removeCallbacks(introWiden)
+        introHoldUntil = 0L
+        introS.snap(0f)
+        widthS.snap(dp(10f)); heightS.snap(dp(10f)); radiusS.snap(dp(5f))
+        topS.snap(baseTop + dp(12f))
+        compactA.snap(0f); expandedA.snap(0f)
+        sheenStart = 0L
+        invalidate()
+    }
+
     /**
-     * Wake / unlock animation: the island condenses from a tiny dot inside the camera cutout,
-     * springs out past its size, settles, then a soft sheen sweeps across it.
+     * Wake / unlock animation, in two stages:
+     *  1. a dot appears in the camera hole and pops into a circle,
+     *  2. the circle stretches sideways into the pill with a soft overshoot, content fades in
+     *     and a sheen sweeps across.
      */
     fun playIntro() {
         if (isAbsorbing) return
+        hideForIntro()
         val spec = specFor(presentation, activity)
-        widthS.snap(dp(12f)); heightS.snap(dp(12f)); radiusS.snap(dp(6f))
-        topS.snap(baseTop + dp(10f))
-        introS.snap(0f)
-        compactA.snap(0f); expandedA.snap(0f)
-        shapeSprings.forEach { it.stiffness = 260f; it.dampingRatio = 0.6f }
-        heightS.dampingRatio = 0.7f
-        widthS.target = spec.w; heightS.target = spec.h; radiusS.target = spec.r; topS.target = baseTop
+        val d = min(spec.h, dp(34f))
+        shapeSprings.forEach { it.stiffness = 260f; it.dampingRatio = 0.55f }
+        widthS.target = d; heightS.target = d; radiusS.target = d / 2f
+        topS.target = baseTop
         introS.target = 1f
-        expandedA.target = if (presentation == Presentation.EXPANDED) 1f else 0f
-        compactA.target = if (presentation == Presentation.COMPACT) 1f else 0f
-        sheenStart = SystemClock.uptimeMillis() + 260L
+        introHoldUntil = SystemClock.uptimeMillis() + INTRO_HOLD_MS
+        postDelayed(introWiden, INTRO_HOLD_MS)
         settled = false
         kick()
+    }
+
+    private fun widenIntro() {
+        introHoldUntil = 0L
+        val spec = specFor(presentation, activity)
+        widthS.stiffness = 150f; widthS.dampingRatio = 0.6f
+        heightS.stiffness = 170f; heightS.dampingRatio = 0.72f
+        radiusS.stiffness = 170f; radiusS.dampingRatio = 0.85f
+        widthS.target = spec.w; heightS.target = spec.h; radiusS.target = spec.r; topS.target = baseTop
+        setContentTargets(presentation)
+        sheenStart = SystemClock.uptimeMillis() + 300L
+        settled = false
+        kick()
+    }
+
+    private fun restoreShapeSprings() {
+        shapeSprings.forEach { it.stiffness = SHAPE_K }
+        widthS.dampingRatio = WIDTH_DAMP
+        heightS.dampingRatio = HEIGHT_DAMP
+        radiusS.dampingRatio = 0.9f
+        topS.dampingRatio = 0.86f
     }
 
     /** Pixel size the overlay window needs for the current target state. */
@@ -231,6 +287,7 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
             IslandMode.CALL -> Spec(w, dp(88f), dp(44f))
             IslandMode.MESSAGE -> Spec(w, dp(if (visibleActions(a).isEmpty()) 84f else 134f), dp(40f))
             IslandMode.CHARGING -> Spec(w, dp(64f), dp(32f))
+            IslandMode.TIMER -> Spec(w, dp(if (visibleActions(a).isEmpty()) 88f else 138f), dp(44f))
             else -> Spec(w, dp(84f), dp(42f))
         }
     }
@@ -256,7 +313,7 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         invalidate()
         if (rest && !settled && !tracking) {
             settled = true
-            shapeSprings.forEach { it.stiffness = 430f; it.dampingRatio = if (it === widthS) 0.76f else 0.82f }
+            restoreShapeSprings()
             callbacks?.onSettled()
         }
         val continuous = continuousDelay()
@@ -278,10 +335,17 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
     private fun continuousDelay(): Long? {
         val a = activity ?: return null
         if (presentation == Presentation.IDLE) return null
+        val base = a.chronometerBase
         return when {
             a.mode == IslandMode.MUSIC && a.isPlaying -> 16L
             a.mode == IslandMode.CALL -> 33L
-            a.chronometerBase != null -> 250L
+            base != null -> {
+                // Smooth frames while a digit rolls, otherwise wake exactly at the next second.
+                if (rollAt != 0L && SystemClock.uptimeMillis() - rollAt < ROLL_MS) return 16L
+                val now = System.currentTimeMillis()
+                val toNext = if (a.chronometerCountDown) (base - now).mod(1000L) else 1000L - (now - base).mod(1000L)
+                (toNext + 8L).coerceIn(16L, 1000L)
+            }
             else -> null
         }
     }
@@ -298,6 +362,7 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
 
     override fun onDetachedFromWindow() {
         pendingTap?.let { removeCallbacks(it) }; pendingTap = null
+        removeCallbacks(introWiden); introHoldUntil = 0L
         Choreographer.getInstance().removeFrameCallback(this)
         running = false
         super.onDetachedFromWindow()
@@ -343,10 +408,11 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
 
         val ea = expandedA.value.coerceIn(0f, 1f)
         val ca = compactA.value.coerceIn(0f, 1f)
+        val liveTimer = isLiveTimer(a)
         actionHits.clear()
         if (ea > 0.01f) {
-            drawGlow(canvas, a, ea)
-            val alpha = (((ea - 0.35f) / 0.65f).coerceIn(0f, 1f) * 255).toInt()
+            drawGlow(canvas, a, ea * intro)
+            val alpha = (((ea - 0.35f) / 0.65f).coerceIn(0f, 1f) * 255 * intro).toInt()
             // Content rises and scales in slightly as the shape opens, like iOS.
             val lift = (1f - ea) * dp(10f)
             val sc = 0.94f + 0.06f * ea
@@ -358,13 +424,14 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
                 IslandMode.MESSAGE -> drawMessageExpanded(canvas, a, alpha)
                 IslandMode.CALL -> drawCallExpanded(canvas, a, alpha)
                 IslandMode.CHARGING -> drawChargingExpanded(canvas, a, alpha)
+                IslandMode.TIMER -> if (liveTimer) drawTimerExpanded(canvas, a, alpha) else drawGenericExpanded(canvas, a, alpha)
                 else -> drawGenericExpanded(canvas, a, alpha)
             }
             canvas.restore()
         } else {
             barY = -1000f
         }
-        if (ca > 0.01f) {
+        if (ca > 0.01f && !liveTimer) {
             val alpha = (((ca - 0.3f) / 0.7f).coerceIn(0f, 1f) * 255).toInt()
             if (alpha > 2) {
                 // Compact glyphs slide in from the centre as the pill widens.
@@ -374,6 +441,8 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
                 canvas.restore()
             }
         }
+        // The timer's ring and digits are shared between compact and expanded and morph between them.
+        if (liveTimer) drawTimerMorph(canvas, a, ea, ca, intro)
         if (absorb > 0.01f) drawAbsorb(canvas, a, absorb)
         canvas.restore()
     }
@@ -578,6 +647,107 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         canvas.drawRoundRect(bl + dp(2f), cy - bh / 2 + dp(2f), bl + dp(2f) + (bw - dp(4f)) * level / 100f, cy + bh / 2 - dp(2f), dp(3.5f), dp(3.5f), fillPaint)
         text(canvas, a.title, bl - dp(10f), cy + dp(6f), dp(80f), titlePaint, AppStyle.GREEN, alpha, alignRight = true)
     }
+
+    // ---------------------------------------------------------------- timer
+
+    private fun isLiveTimer(a: LiveActivity) = a.mode == IslandMode.TIMER && a.chronometerBase != null
+
+    /** Title and buttons; the ring and digits are drawn by drawTimerMorph. */
+    private fun drawTimerExpanded(canvas: Canvas, a: LiveActivity, alpha: Int) {
+        val l = rect.left + dp(20f)
+        val rr = rect.right - dp(20f)
+        val cy = rect.top + dp(44f)
+        val tx = l + dp(42f) + dp(14f)
+        val maxW = rr - dp(132f) - tx
+        text(canvas, a.title, tx, cy - dp(3f), maxW, titlePaint, Color.WHITE, alpha)
+        text(canvas, if (a.chronometerCountDown) "Timer" else a.appLabel, tx, cy + dp(16f), maxW, bodyPaint, GREY, alpha)
+        drawActions(canvas, a, l, rect.top + dp(88f), rr, alpha)
+    }
+
+    private fun drawTimerMorph(canvas: Canvas, a: LiveActivity, ea: Float, ca: Float, intro: Float) {
+        val vis = max(ea, ca)
+        val alpha = (((vis - 0.2f) / 0.8f).coerceIn(0f, 1f) * 255 * intro).toInt()
+        if (alpha < 3) return
+        // 0 = compact layout, 1 = expanded layout
+        val m = (ea / max(ea + ca, 0.0001f)).coerceIn(0f, 1f)
+        val eRing = dp(21f)
+        val ringR = lerp(dp(8.5f), eRing, m)
+        val ringX = lerp(rect.left + dp(18f), rect.left + dp(20f) + eRing, m)
+        val ringY = lerp(rect.centerY(), rect.top + dp(44f), m)
+        drawRing(canvas, ringX, ringY, ringR, lerp(dp(2.6f), dp(4f), m), timerFraction(a), alpha)
+
+        updateRoll(a)
+        digitPaint.textSize = lerp(dp(13.5f), dp(32f), m)
+        val right = lerp(rect.right - dp(13f), rect.right - dp(20f), m)
+        val baseline = lerp(rect.centerY() + dp(4.8f), rect.top + dp(55f), m)
+        drawRolling(canvas, right, baseline, alpha, a.chronometerCountDown)
+    }
+
+    private fun drawRing(canvas: Canvas, cx: Float, cy: Float, r: Float, stroke: Float, fraction: Float, alpha: Int) {
+        ringPaint.strokeWidth = stroke
+        arcRect.set(cx - r, cy - r, cx + r, cy + r)
+        ringPaint.color = withAlpha(TIMER_ORANGE, alpha * 70 / 255)
+        canvas.drawOval(arcRect, ringPaint)
+        if (fraction > 0.001f) {
+            ringPaint.color = withAlpha(TIMER_ORANGE, alpha)
+            canvas.drawArc(arcRect, -90f, 360f * fraction, false, ringPaint)
+        }
+    }
+
+    /** Countdown: remaining share of the longest duration seen. Stopwatch: sweeps once a minute. */
+    private fun timerFraction(a: LiveActivity): Float {
+        val base = a.chronometerBase ?: return 0f
+        val now = System.currentTimeMillis()
+        if (!a.chronometerCountDown) return (now - base).mod(60_000L) / 60_000f
+        val remaining = (base - now).coerceAtLeast(0L)
+        if (timerTotals.size > 16 && a.key !in timerTotals) timerTotals.clear()
+        val total = max(timerTotals[a.key] ?: 0L, remaining)
+        timerTotals[a.key] = total
+        return if (total <= 0L) 0f else remaining.toFloat() / total
+    }
+
+    private fun updateRoll(a: LiveActivity) {
+        val t = a.chronometerText().orEmpty()
+        if (a.key != rollKey) {
+            rollKey = a.key; rollText = t; rollPrev = t; rollAt = 0L
+        } else if (t != rollText) {
+            rollPrev = rollText; rollText = t; rollAt = SystemClock.uptimeMillis()
+        }
+    }
+
+    /** Digits that change roll in (from above when counting down, from below when counting up). */
+    private fun drawRolling(canvas: Canvas, right: Float, baseline: Float, alpha: Int, countDown: Boolean) {
+        val p = digitPaint
+        val cur = rollText
+        val prev = rollPrev
+        val progress = if (rollAt == 0L) 1f
+        else ((SystemClock.uptimeMillis() - rollAt).toFloat() / ROLL_MS).coerceIn(0f, 1f)
+        val e = 1f - (1f - progress) * (1f - progress) * (1f - progress)
+        val shift = p.textSize * 0.75f
+        val dir = if (countDown) 1f else -1f
+        val sameShape = prev.length == cur.length
+        var x = right - p.measureText(cur)
+        for (i in cur.indices) {
+            val ch = cur[i]
+            val s = ch.toString()
+            val w = p.measureText(s)
+            val old = if (sameShape) prev[i] else ch
+            if (old != ch && e < 1f) {
+                p.color = withAlpha(TIMER_ORANGE, (alpha * (1f - e)).toInt())
+                canvas.drawText(old.toString(), x, baseline + dir * e * shift, p)
+                p.color = withAlpha(TIMER_ORANGE, (alpha * e).toInt())
+                canvas.drawText(s, x, baseline - dir * (1f - e) * shift, p)
+            } else {
+                p.color = withAlpha(TIMER_ORANGE, alpha)
+                canvas.drawText(s, x, baseline, p)
+            }
+            x += w
+        }
+    }
+
+    private fun lerp(a: Float, b: Float, t: Float) = a + (b - a) * t
+
+
 
     /** While swiping away from an app, its art shrinks with the shape into the island. */
     private fun drawAbsorb(canvas: Canvas, a: LiveActivity, absorb: Float) {
@@ -944,7 +1114,15 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
 
     companion object {
         private val GREY = Color.rgb(152, 152, 159)
+        private val TIMER_ORANGE = Color.rgb(255, 159, 10)
         private const val LONG_PRESS_MS = 350L
-        private const val SHEEN_MS = 700L
+        private const val SHEEN_MS = 800L
+        private const val INTRO_HOLD_MS = 190L
+        private const val ROLL_MS = 320L
+        private const val SHAPE_K = 190f
+        private const val WIDTH_DAMP = 0.72f
+        private const val HEIGHT_DAMP = 0.8f
+        private const val CONTENT_IN_K = 130f
+        private const val CONTENT_OUT_K = 420f
     }
 }
