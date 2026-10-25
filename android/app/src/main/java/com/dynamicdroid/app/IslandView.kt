@@ -562,7 +562,7 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
                 canvas.drawCircle(l + s / 2, cy, s / 2, fillPaint)
                 drawPhone(canvas, l + s / 2, cy, dp(13f), alpha, false)
             }
-            IslandMode.CHARGING -> drawBolt(canvas, l + s / 2, cy, dp(14f), withAlpha(NothingStyle.muted, alpha))
+            IslandMode.CHARGING -> drawBolt(canvas, l + s / 2, cy, dp(14f), withAlpha(accentSoft, alpha))
             else -> {
                 val img = a.artwork ?: a.appIcon
                 if (img != null) drawImage(canvas, img, l, cy - s / 2, s, s / 2, alpha)
@@ -693,7 +693,7 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         val cy = rect.centerY()
         val l = rect.left + dp(22f)
         val rr = rect.right - dp(22f)
-        drawBolt(canvas, l + dp(9f), cy, dp(18f), withAlpha(NothingStyle.muted, alpha))
+        drawBolt(canvas, l + dp(9f), cy, dp(18f), withAlpha(accentSoft, alpha))
         text(canvas, "Charging", l + dp(26f), cy + dp(6f), dp(140f), titlePaint, Color.WHITE, alpha)
         // Battery pill
         val bw = dp(34f)
@@ -712,7 +712,7 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
     private fun isLiveTimer(a: LiveActivity) = a.mode == IslandMode.TIMER && a.clockMs() != null
 
     /** Title and buttons; the ring and digits are drawn by drawTimerMorph. */
-    private fun drawTimerExpanded(canvas: Canvas, a: LiveActivity, alpha: Int) {
+    private fun drawTimerExpanded(canvas: Canvas, a: LiveActivity, alpha: Int, late: Int) {
         val l = rect.left + dp(20f)
         val rr = rect.right - dp(20f)
         val cy = rect.top + dp(44f)
@@ -720,7 +720,7 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         val maxW = rr - dp(132f) - tx
         text(canvas, a.title, tx, cy - dp(3f), maxW, titlePaint, Color.WHITE, alpha)
         text(canvas, if (a.pausedTimerMs != null) "Paused" else if (a.chronometerCountDown) "Timer" else a.appLabel, tx, cy + dp(16f), maxW, bodyPaint, GREY, alpha)
-        drawActions(canvas, a, l, rect.top + dp(88f), rr, alpha)
+        drawActions(canvas, a, l, rect.top + dp(88f), rr, late)
     }
 
     private fun drawTimerMorph(canvas: Canvas, a: LiveActivity, ea: Float, ca: Float, intro: Float) {
@@ -746,10 +746,10 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
     private fun drawRing(canvas: Canvas, cx: Float, cy: Float, r: Float, stroke: Float, fraction: Float, alpha: Int) {
         ringPaint.strokeWidth = stroke
         arcRect.set(cx - r, cy - r, cx + r, cy + r)
-        ringPaint.color = withAlpha(TIMER_ORANGE, alpha * 70 / 255)
+        ringPaint.color = withAlpha(accent, alpha * 70 / 255)
         canvas.drawOval(arcRect, ringPaint)
         if (fraction > 0.001f) {
-            ringPaint.color = withAlpha(TIMER_ORANGE, alpha)
+            ringPaint.color = withAlpha(accent, alpha)
             canvas.drawArc(arcRect, -90f, 360f * fraction, false, ringPaint)
         }
     }
@@ -791,12 +791,12 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
             val w = p.measureText(s)
             val old = if (sameShape) prev[i] else ch
             if (old != ch && e < 1f) {
-                p.color = withAlpha(TIMER_ORANGE, (alpha * (1f - e)).toInt())
+                p.color = withAlpha(accent, (alpha * (1f - e)).toInt())
                 canvas.drawText(old.toString(), x, baseline + dir * e * shift, p)
-                p.color = withAlpha(TIMER_ORANGE, (alpha * e).toInt())
+                p.color = withAlpha(accent, (alpha * e).toInt())
                 canvas.drawText(s, x, baseline - dir * (1f - e) * shift, p)
             } else {
-                p.color = withAlpha(TIMER_ORANGE, alpha)
+                p.color = withAlpha(accent, alpha)
                 canvas.drawText(s, x, baseline, p)
             }
             x += w
