@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="accessibility_label">Dynamic Droid island</string>
+    <string name="accessibility_description">Lets you tap the island at the very top of the screen without pulling down the notification shade. Dynamic Droid does not read anything on your screen.</string>
+</resources>

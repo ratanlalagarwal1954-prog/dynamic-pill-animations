@@ -10,3 +10,5 @@
 <!-- LOVABLE:END -->
 
 - The real product is the native Android app in `android/`; island motion is spring-driven in IslandView.kt (no Animator APIs) so every gesture can interrupt any animation.
+- The island window is hosted by IslandAccessibilityService (TYPE_ACCESSIBILITY_OVERLAY) when enabled, falling back to TYPE_APPLICATION_OVERLAY; app overlays sit below the status bar, so top-edge taps would otherwise open the notification shade.
+- The wake intro is armed on SCREEN_OFF and played only after the keyguard is gone (polled), because overlays animating behind the lock screen are never seen.
