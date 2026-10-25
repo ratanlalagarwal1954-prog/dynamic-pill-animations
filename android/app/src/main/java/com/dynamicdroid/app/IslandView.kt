@@ -38,8 +38,8 @@ enum class Presentation { IDLE, COMPACT, EXPANDED }
  * The island. Shape and content are driven by springs stepped on every display frame, so
  * every change (new activity, expand, collapse, press, drag) morphs smoothly instead of
  * jumping. Gestures follow iOS:
- *  - compact: tap opens the app, long-press (or pull down) expands
- *  - expanded: tap content opens the app, controls work in place, swipe up / tap outside collapses
+ *  - compact: tap opens the app, double-tap / long-press / pull down expands
+ *  - expanded: tap content opens the app, controls work in place, double-tap / swipe up / tap outside collapses
  */
 class IslandView(context: Context) : View(context), Choreographer.FrameCallback {
 
@@ -78,8 +78,12 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
     private val pressS = Spring(1f, 700f, 0.62f, 0.0008f)
     private val stretchS = Spring(0f, 520f, 0.68f, 0.5f)
     private val absorbS = Spring(0f, 150f, 1f, 0.004f)
+    // Wake/unlock intro: 0 = hidden dot, 1 = fully present
+    private val introS = Spring(1f, 210f, 0.62f, 0.002f)
+    // Sheen that sweeps across the pill once the intro lands (0..1 position, >1 = done)
+    private var sheenStart = 0L
     private val shapeSprings = listOf(widthS, heightS, radiusS, topS)
-    private val springs = listOf(widthS, heightS, radiusS, topS, expandedA, compactA, pressS, stretchS, absorbS)
+    private val springs = listOf(widthS, heightS, radiusS, topS, expandedA, compactA, pressS, stretchS, absorbS, introS)
 
     private val shapePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK }
     private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -126,6 +130,18 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         }
     }
 
+    // Double tap: a second tap within the window toggles expand/collapse instead of opening.
+    private val doubleTapMs = ViewConfiguration.getDoubleTapTimeout().toLong().coerceIn(180L, 280L)
+    private var lastTapAt = 0L
+    private var lastTapX = 0f
+    private var lastTapY = 0f
+    private var pendingTap: Runnable? = null
+
+    // Cached glow shader (rebuilding a RadialGradient every frame churns the GC)
+    private var glowShader: RadialGradient? = null
+    private var glowColor = 0
+    private var glowRadius = 0f
+
     // Frame loop
     private var running = false
     private var lastFrame = 0L
@@ -164,6 +180,28 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         expandedA.target = if (p == Presentation.EXPANDED) 1f else 0f
         compactA.target = if (p == Presentation.COMPACT) 1f else 0f
         refreshContentDescription()
+        settled = false
+        kick()
+    }
+
+    /**
+     * Wake / unlock animation: the island condenses from a tiny dot inside the camera cutout,
+     * springs out past its size, settles, then a soft sheen sweeps across it.
+     */
+    fun playIntro() {
+        if (isAbsorbing) return
+        val spec = specFor(presentation, activity)
+        widthS.snap(dp(12f)); heightS.snap(dp(12f)); radiusS.snap(dp(6f))
+        topS.snap(baseTop + dp(10f))
+        introS.snap(0f)
+        compactA.snap(0f); expandedA.snap(0f)
+        shapeSprings.forEach { it.stiffness = 260f; it.dampingRatio = 0.6f }
+        heightS.dampingRatio = 0.7f
+        widthS.target = spec.w; heightS.target = spec.h; radiusS.target = spec.r; topS.target = baseTop
+        introS.target = 1f
+        expandedA.target = if (presentation == Presentation.EXPANDED) 1f else 0f
+        compactA.target = if (presentation == Presentation.COMPACT) 1f else 0f
+        sheenStart = SystemClock.uptimeMillis() + 260L
         settled = false
         kick()
     }
@@ -207,7 +245,7 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
     }
 
     override fun doFrame(frameTimeNanos: Long) {
-        if (!isAttachedToWindow) { running = false; return }
+        if (!isAttachedToWindow || !isShown) { running = false; lastFrame = 0L; return }
         val dt = if (lastFrame == 0L) 1f / 60f else (frameTimeNanos - lastFrame) / 1_000_000_000f
         lastFrame = frameTimeNanos
         var rest = true
@@ -223,10 +261,17 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         }
         val continuous = continuousDelay()
         when {
-            !rest || tracking -> Choreographer.getInstance().postFrameCallback(this)
+            !rest || tracking || sheenActive() -> Choreographer.getInstance().postFrameCallback(this)
             continuous != null -> { lastFrame = 0L; Choreographer.getInstance().postFrameCallbackDelayed(this, continuous) }
             else -> running = false
         }
+    }
+
+    private fun sheenActive(): Boolean {
+        if (sheenStart == 0L) return false
+        val t = SystemClock.uptimeMillis() - sheenStart
+        if (t > SHEEN_MS) { sheenStart = 0L; return false }
+        return true
     }
 
     /** Waveforms and clocks keep redrawing even when the shape is at rest. */
@@ -246,7 +291,13 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         kick()
     }
 
+    override fun onVisibilityChanged(changedView: View, visibility: Int) {
+        super.onVisibilityChanged(changedView, visibility)
+        if (visibility == VISIBLE) kick()
+    }
+
     override fun onDetachedFromWindow() {
+        pendingTap?.let { removeCallbacks(it) }; pendingTap = null
         Choreographer.getInstance().removeFrameCallback(this)
         running = false
         super.onDetachedFromWindow()
@@ -278,9 +329,11 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         rect.set(cx - w / 2f, top, cx + w / 2f, top + h)
         val r = min(radiusS.value * press, h / 2f)
         val absorb = absorbS.value.coerceIn(0f, 1f)
+        val intro = introS.value.coerceIn(0f, 1f)
 
-        shapePaint.alpha = (255 * (1f - absorb * 0.3f)).toInt()
+        shapePaint.alpha = (255 * (1f - absorb * 0.3f) * min(1f, intro * 2.5f)).toInt()
         canvas.drawRoundRect(rect, r, r, shapePaint)
+        drawSheen(canvas, r)
         if (a == null) return
 
         clip.reset()
@@ -294,6 +347,12 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         if (ea > 0.01f) {
             drawGlow(canvas, a, ea)
             val alpha = (((ea - 0.35f) / 0.65f).coerceIn(0f, 1f) * 255).toInt()
+            // Content rises and scales in slightly as the shape opens, like iOS.
+            val lift = (1f - ea) * dp(10f)
+            val sc = 0.94f + 0.06f * ea
+            canvas.save()
+            canvas.translate(0f, -lift)
+            canvas.scale(sc, sc, rect.centerX(), rect.top)
             if (alpha > 2) when (a.mode) {
                 IslandMode.MUSIC -> drawMusicExpanded(canvas, a, alpha)
                 IslandMode.MESSAGE -> drawMessageExpanded(canvas, a, alpha)
@@ -301,12 +360,19 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
                 IslandMode.CHARGING -> drawChargingExpanded(canvas, a, alpha)
                 else -> drawGenericExpanded(canvas, a, alpha)
             }
+            canvas.restore()
         } else {
             barY = -1000f
         }
         if (ca > 0.01f) {
             val alpha = (((ca - 0.3f) / 0.7f).coerceIn(0f, 1f) * 255).toInt()
-            if (alpha > 2) drawCompact(canvas, a, alpha)
+            if (alpha > 2) {
+                // Compact glyphs slide in from the centre as the pill widens.
+                canvas.save()
+                canvas.scale(1f - (1f - ca) * 0.08f, 1f, rect.centerX(), rect.centerY())
+                drawCompact(canvas, a, (alpha * intro).toInt())
+                canvas.restore()
+            }
         }
         if (absorb > 0.01f) drawAbsorb(canvas, a, absorb)
         canvas.restore()
@@ -315,13 +381,46 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
     /** Soft wash of the app's colour (WhatsApp green, Spotify green, YouTube red...). */
     private fun drawGlow(canvas: Canvas, a: LiveActivity, ea: Float) {
         val color = a.accent
-        glowPaint.shader = RadialGradient(
-            rect.left + dp(48f), rect.top + dp(44f), max(rect.width() * 0.75f, 1f),
-            intArrayOf(withAlpha(color, (0x66 * ea).toInt()), withAlpha(color, (0x14 * ea).toInt()), Color.TRANSPARENT),
-            floatArrayOf(0f, 0.55f, 1f), Shader.TileMode.CLAMP
-        )
+        val radius = max(expandedWidth() * 0.75f, 1f)
+        var shader = glowShader
+        if (shader == null || glowColor != color || glowRadius != radius) {
+            shader = RadialGradient(
+                0f, 0f, radius,
+                intArrayOf(withAlpha(color, 0x66), withAlpha(color, 0x14), Color.TRANSPARENT),
+                floatArrayOf(0f, 0.55f, 1f), Shader.TileMode.CLAMP
+            )
+            glowShader = shader; glowColor = color; glowRadius = radius
+        }
+        matrix.reset()
+        matrix.setTranslate(rect.left + dp(48f), rect.top + dp(44f))
+        shader.setLocalMatrix(matrix)
+        glowPaint.shader = shader
+        glowPaint.alpha = (255 * ea).toInt()
         canvas.drawRect(rect, glowPaint)
         glowPaint.shader = null
+        glowPaint.alpha = 255
+    }
+
+    private val sheenPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private var sheenShader: LinearGradient? = null
+
+    private fun drawSheen(canvas: Canvas, r: Float) {
+        if (sheenStart == 0L) return
+        val t = (SystemClock.uptimeMillis() - sheenStart).toFloat() / SHEEN_MS
+        if (t < 0f || t > 1f) return
+        val band = dp(60f)
+        val shader = sheenShader ?: LinearGradient(
+            0f, 0f, band, 0f,
+            intArrayOf(Color.TRANSPARENT, Color.argb(46, 255, 255, 255), Color.TRANSPARENT),
+            null, Shader.TileMode.CLAMP
+        ).also { sheenShader = it }
+        val eased = 1f - (1f - t) * (1f - t) * (1f - t)
+        val x = rect.left - band + (rect.width() + band) * eased
+        matrix.reset(); matrix.setTranslate(x, 0f)
+        shader.setLocalMatrix(matrix)
+        sheenPaint.shader = shader
+        sheenPaint.alpha = (255 * sin(Math.PI * t).toFloat()).toInt()
+        canvas.drawRoundRect(rect, r, r, sheenPaint)
     }
 
     private fun drawCompact(canvas: Canvas, a: LiveActivity, alpha: Int) {
@@ -719,7 +818,7 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
                     dragging && dy > dp(26f) && presentation == Presentation.COMPACT -> callbacks?.onExpandRequest()
                     !dragging -> {
                         performClick()
-                        handleTap(e.x, e.y)
+                        onTapUp(e.x, e.y)
                     }
                 }
                 seeking = false
@@ -755,6 +854,43 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
         if (presentation == Presentation.EXPANDED && !a.isTransient) callbacks?.onCollapseRequest()
         else callbacks?.onDismiss(a)
+    }
+
+    /** Hit on interactive controls (buttons, transport) must stay instant — no double-tap wait. */
+    private fun isControlHit(x: Float, y: Float): Boolean {
+        if (presentation != Presentation.EXPANDED) return false
+        if (actionHits.any { it.first.contains(x, y) }) return true
+        val a = activity ?: return false
+        return a.mode == IslandMode.MUSIC && y > barY + dp(16f)
+    }
+
+    private fun onTapUp(x: Float, y: Float) {
+        val now = SystemClock.uptimeMillis()
+        if (isControlHit(x, y) || presentation == Presentation.IDLE) { handleTap(x, y); return }
+        val near = abs(x - lastTapX) < dp(48f) && abs(y - lastTapY) < dp(48f)
+        if (pendingTap != null && now - lastTapAt <= doubleTapMs && near) {
+            removeCallbacks(pendingTap); pendingTap = null; lastTapAt = 0L
+            onDoubleTap()
+            return
+        }
+        lastTapAt = now; lastTapX = x; lastTapY = y
+        val r = Runnable { pendingTap = null; handleTap(x, y) }
+        pendingTap = r
+        postDelayed(r, doubleTapMs)
+    }
+
+    private fun onDoubleTap() {
+        val a = activity ?: return
+        performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+        // Little squish so the gesture registers visually before the morph.
+        pressS.snap(0.9f); pressS.target = 1f
+        when (presentation) {
+            Presentation.COMPACT -> callbacks?.onExpandRequest()
+            Presentation.EXPANDED -> if (!a.isTransient) callbacks?.onCollapseRequest() else callbacks?.onDismiss(a)
+            Presentation.IDLE -> Unit
+        }
+        settled = false
+        kick()
     }
 
     private fun handleTap(x: Float, y: Float) {
@@ -809,5 +945,6 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
     companion object {
         private val GREY = Color.rgb(152, 152, 159)
         private const val LONG_PRESS_MS = 350L
+        private const val SHEEN_MS = 700L
     }
 }

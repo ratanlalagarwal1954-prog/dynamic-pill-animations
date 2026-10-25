@@ -65,6 +65,15 @@ class IslandOverlayService : Service(), IslandBus.Listener, IslandView.Callbacks
         }
     }
 
+    /** Phone woke up or was unlocked: replay the island's intro animation. */
+    private val wakeReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                Intent.ACTION_SCREEN_ON, Intent.ACTION_USER_PRESENT -> island?.playIntro()
+            }
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         createChannel()
@@ -78,6 +87,11 @@ class IslandOverlayService : Service(), IslandBus.Listener, IslandView.Callbacks
             .build())
         ContextCompat.registerReceiver(
             this, powerReceiver, IntentFilter(Intent.ACTION_POWER_CONNECTED), ContextCompat.RECEIVER_EXPORTED
+        )
+        ContextCompat.registerReceiver(
+            this, wakeReceiver,
+            IntentFilter().apply { addAction(Intent.ACTION_SCREEN_ON); addAction(Intent.ACTION_USER_PRESENT) },
+            ContextCompat.RECEIVER_NOT_EXPORTED
         )
         watcher = ForegroundWatcher(this, ::onForegroundChanged)
         if (Settings.canDrawOverlays(this)) showOverlay()
@@ -119,6 +133,7 @@ class IslandOverlayService : Service(), IslandBus.Listener, IslandView.Callbacks
         }
         params = lp
         wm.addView(view, lp)
+        view.post { view.playIntro() }
     }
 
     // ---------------------------------------------------------------- state
@@ -322,6 +337,7 @@ class IslandOverlayService : Service(), IslandBus.Listener, IslandView.Callbacks
         handler.removeCallbacksAndMessages(null)
         island?.let { v -> runCatching { windowManager?.removeView(v) } }
         runCatching { unregisterReceiver(powerReceiver) }
+        runCatching { unregisterReceiver(wakeReceiver) }
         super.onDestroy()
     }
 
