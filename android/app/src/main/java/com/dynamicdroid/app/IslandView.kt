@@ -408,6 +408,7 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
     override fun onDraw(canvas: Canvas) {
         val a = activity
         val cx = width / 2f
+        val intro = introS.value.coerceIn(0f, 1f)
         val press = pressS.value
         val w = widthS.value * press
         val h = max(dp(if (intro < 1f) 1f else 26f), heightS.value + stretchS.value) * press
@@ -415,7 +416,6 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         rect.set(cx - w / 2f, top, cx + w / 2f, top + h)
         val r = min(radiusS.value * press, h / 2f)
         val absorb = absorbS.value.coerceIn(0f, 1f)
-        val intro = introS.value.coerceIn(0f, 1f)
 
         shapePaint.alpha = (255 * (1f - absorb * 0.3f) * min(1f, intro * 2.5f)).toInt()
         canvas.drawRoundRect(rect, r, r, shapePaint)
@@ -671,7 +671,7 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
 
     // ---------------------------------------------------------------- timer
 
-    private fun isLiveTimer(a: LiveActivity) = a.mode == IslandMode.TIMER && a.chronometerBase != null
+    private fun isLiveTimer(a: LiveActivity) = a.mode == IslandMode.TIMER && a.clockMs() != null
 
     /** Title and buttons; the ring and digits are drawn by drawTimerMorph. */
     private fun drawTimerExpanded(canvas: Canvas, a: LiveActivity, alpha: Int) {
@@ -681,16 +681,17 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         val tx = l + dp(42f) + dp(14f)
         val maxW = rr - dp(132f) - tx
         text(canvas, a.title, tx, cy - dp(3f), maxW, titlePaint, Color.WHITE, alpha)
-        text(canvas, if (a.chronometerCountDown) "Timer" else a.appLabel, tx, cy + dp(16f), maxW, bodyPaint, GREY, alpha)
+        text(canvas, if (a.pausedTimerMs != null) "Paused" else if (a.chronometerCountDown) "Timer" else a.appLabel, tx, cy + dp(16f), maxW, bodyPaint, GREY, alpha)
         drawActions(canvas, a, l, rect.top + dp(88f), rr, alpha)
     }
 
     private fun drawTimerMorph(canvas: Canvas, a: LiveActivity, ea: Float, ca: Float, intro: Float) {
-        val vis = max(ea, ca)
+        val vis = (ea + ca).coerceIn(0f, 1f)
         val alpha = (((vis - 0.2f) / 0.8f).coerceIn(0f, 1f) * 255 * intro).toInt()
         if (alpha < 3) return
         // 0 = compact layout, 1 = expanded layout
-        val m = (ea / max(ea + ca, 0.0001f)).coerceIn(0f, 1f)
+        val expandedHeight = specFor(Presentation.EXPANDED, a).h
+        val m = ((heightS.value - dp(34f)) / (expandedHeight - dp(34f))).coerceIn(0f, 1f)
         val eRing = dp(21f)
         val ringR = lerp(dp(8.5f), eRing, m)
         val ringX = lerp(rect.left + dp(18f), rect.left + dp(20f) + eRing, m)
@@ -717,10 +718,8 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
 
     /** Countdown: remaining share of the longest duration seen. Stopwatch: sweeps once a minute. */
     private fun timerFraction(a: LiveActivity): Float {
-        val base = a.chronometerBase ?: return 0f
-        val now = System.currentTimeMillis()
-        if (!a.chronometerCountDown) return (now - base).mod(60_000L) / 60_000f
-        val remaining = (base - now).coerceAtLeast(0L)
+        val remaining = a.clockMs() ?: return 0f
+        if (!a.chronometerCountDown) return remaining.mod(60_000L) / 60_000f
         if (timerTotals.size > 16 && a.key !in timerTotals) timerTotals.clear()
         val total = max(timerTotals[a.key] ?: 0L, remaining)
         timerTotals[a.key] = total
@@ -1074,7 +1073,8 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         val a = activity ?: return
         performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
         // Little squish so the gesture registers visually before the morph.
-        pressS.snap(0.9f); pressS.target = 1f
+        // Preserve velocity rather than teleporting the whole island on the second tap.
+        pressS.target = 1f
         when (presentation) {
             Presentation.COMPACT -> callbacks?.onExpandRequest()
             Presentation.EXPANDED -> if (!a.isTransient) callbacks?.onCollapseRequest() else callbacks?.onDismiss(a)

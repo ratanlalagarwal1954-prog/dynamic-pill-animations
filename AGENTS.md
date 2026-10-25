@@ -12,3 +12,6 @@
 - The real product is the native Android app in `android/`; island motion is spring-driven in IslandView.kt (no Animator APIs) so every gesture can interrupt any animation.
 - The island window is hosted by IslandAccessibilityService (TYPE_ACCESSIBILITY_OVERLAY) when enabled, falling back to TYPE_APPLICATION_OVERLAY; app overlays sit below the status bar, so top-edge taps would otherwise open the notification shade.
 - The wake intro is armed on SCREEN_OFF and played only after the keyguard is gone (polled), because overlays animating behind the lock screen are never seen.
+- Keep the overlay window full-width with state-sized height so its horizontal drawing origin never jumps during WindowManager relayout.
+- ClockTimeline owns platform-independent duration parsing, rounding and tick rules; LiveActivity converts notification wall-clock bases to monotonic deadlines so phone clock changes do not shift live countdowns.
+- Clock data refreshes must not restart presentation timeouts, and user interactions must interrupt delayed timer frames immediately.
