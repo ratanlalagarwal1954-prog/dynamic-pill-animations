@@ -17,3 +17,4 @@
 - Clock data refreshes must not restart presentation timeouts, and user interactions must interrupt delayed timer frames immediately.
 - Store device-only island calibration in SharedPreferences through IslandPreferences; IslandFit owns safe bounds, and IslandView scales both drawing and touch coordinates together so controls follow the resized island.
 - NothingStyle owns native UI theme values and DotHeading renders original local dot lettering; never bundle proprietary phone-brand fonts or logos.
+- Native settings use wrap-content text controls with minimum touch sizes and labelled platform widgets so system font scaling and accessibility services remain usable.
