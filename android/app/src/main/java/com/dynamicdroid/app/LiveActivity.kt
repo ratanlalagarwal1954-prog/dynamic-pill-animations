@@ -33,6 +33,11 @@ data class LiveActivity(
     /** Wall-clock base (System.currentTimeMillis) for calls, timers and stopwatches. */
     val chronometerBase: Long? = null,
     val chronometerCountDown: Boolean = false,
+    val pausedTimerMs: Long? = null,
+    /** Monotonic deadline: changing the phone's wall clock cannot jump the digits. */
+    val clockBaseElapsed: Long? = chronometerBase?.let {
+        SystemClock.elapsedRealtime() + (it - System.currentTimeMillis())
+    },
 ) {
     val isTransient: Boolean get() = mode == IslandMode.MESSAGE || mode == IslandMode.CHARGING
 
@@ -41,12 +46,10 @@ data class LiveActivity(
         return if (durationMs > 0L) p.coerceIn(0L, durationMs) else p.coerceAtLeast(0L)
     }
 
-    fun chronometerText(): String? {
-        val base = chronometerBase ?: return null
-        val now = System.currentTimeMillis()
-        val diff = (if (chronometerCountDown) base - now else now - base).coerceAtLeast(0L)
-        return formatDuration(diff)
-    }
+    fun clockMs(now: Long = SystemClock.elapsedRealtime()): Long? =
+        pausedTimerMs ?: clockBaseElapsed?.let { ClockTimeline.remaining(it, now, chronometerCountDown) }
+
+    fun chronometerText(): String? = clockMs()?.let { ClockTimeline.display(it, chronometerCountDown) }
 }
 
 fun formatDuration(ms: Long): String {
