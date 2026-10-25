@@ -158,6 +158,7 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
 
     // Frame loop
     private var running = false
+    private var delayedFrame = false
     private var lastFrame = 0L
     private var settled = true
 
@@ -171,11 +172,16 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
 
     fun show(next: LiveActivity?, nextPresentation: Presentation, absorb: Boolean = false) {
         val p = if (next == null) Presentation.IDLE else nextPresentation
+        if (activity?.key != next?.key || presentation != p) {
+            pendingTap?.let { removeCallbacks(it) }; pendingTap = null
+        }
         activity = next
         presentation = p
         refreshContentDescription()
         // Mid-intro: the widen stage picks up the latest state itself.
         if (!absorb && SystemClock.uptimeMillis() < introHoldUntil) return
+        if (introS.value < 0.001f && introS.target == 0f) return
+        if (introHoldUntil == 0L && !sheenActive() && !isAbsorbing) restoreShapeSprings()
         val spec = specFor(p, next)
 
         if (absorb && next != null) {
@@ -210,6 +216,12 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
 
     /** Screen went off: collapse into an invisible dot so the next wake can grow out of it. */
     fun hideForIntro() {
+        Choreographer.getInstance().removeFrameCallback(this)
+        running = false; delayedFrame = false; lastFrame = 0L
+        tracking = false; seeking = false
+        removeCallbacks(longPress)
+        pendingTap?.let { removeCallbacks(it) }; pendingTap = null
+        pressS.snap(1f); stretchS.snap(0f); absorbS.snap(0f)
         removeCallbacks(introWiden)
         introHoldUntil = 0L
         introS.snap(0f)
@@ -265,7 +277,8 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
     /** Pixel size the overlay window needs for the current target state. */
     fun windowSizeFor(next: LiveActivity?, p: Presentation): Pair<Int, Int> {
         val spec = specFor(if (next == null) Presentation.IDLE else p, next)
-        return Pair((spec.w + dp(40f)).toInt(), (baseTop + spec.h + dp(46f)).toInt())
+        // A fixed horizontal origin avoids one-frame jumps when WindowManager relayouts.
+        return Pair(resources.displayMetrics.widthPixels, (baseTop + spec.h + dp(46f)).toInt())
     }
 
     val isAbsorbing: Boolean get() = absorbS.value > 0.002f
@@ -295,6 +308,11 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
     // ---------------------------------------------------------------- frame loop
 
     private fun kick() {
+        if (delayedFrame) {
+            Choreographer.getInstance().removeFrameCallback(this)
+            delayedFrame = false
+            running = false
+        }
         if (running) return
         running = true
         lastFrame = 0L
@@ -302,6 +320,7 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
     }
 
     override fun doFrame(frameTimeNanos: Long) {
+        delayedFrame = false
         if (!isAttachedToWindow || !isShown) { running = false; lastFrame = 0L; return }
         val dt = if (lastFrame == 0L) 1f / 60f else (frameTimeNanos - lastFrame) / 1_000_000_000f
         lastFrame = frameTimeNanos
@@ -319,7 +338,10 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         val continuous = continuousDelay()
         when {
             !rest || tracking || sheenActive() -> Choreographer.getInstance().postFrameCallback(this)
-            continuous != null -> { lastFrame = 0L; Choreographer.getInstance().postFrameCallbackDelayed(this, continuous) }
+            continuous != null -> {
+                lastFrame = 0L; delayedFrame = true
+                Choreographer.getInstance().postFrameCallbackDelayed(this, continuous)
+            }
             else -> running = false
         }
     }
@@ -335,16 +357,15 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
     private fun continuousDelay(): Long? {
         val a = activity ?: return null
         if (presentation == Presentation.IDLE) return null
-        val base = a.chronometerBase
         return when {
             a.mode == IslandMode.MUSIC && a.isPlaying -> 16L
             a.mode == IslandMode.CALL -> 33L
-            base != null -> {
+            a.clockBaseElapsed != null && a.pausedTimerMs == null -> {
                 // Smooth frames while a digit rolls, otherwise wake exactly at the next second.
                 if (rollAt != 0L && SystemClock.uptimeMillis() - rollAt < ROLL_MS) return 16L
-                val now = System.currentTimeMillis()
-                val toNext = if (a.chronometerCountDown) (base - now).mod(1000L) else 1000L - (now - base).mod(1000L)
-                (toNext + 8L).coerceIn(16L, 1000L)
+                val ms = a.clockMs() ?: return null
+                if (a.chronometerCountDown && ms == 0L) return null
+                ClockTimeline.nextTick(ms, a.chronometerCountDown).coerceIn(16L, 1000L)
             }
             else -> null
         }
@@ -389,7 +410,7 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         val cx = width / 2f
         val press = pressS.value
         val w = widthS.value * press
-        val h = max(dp(26f), heightS.value + stretchS.value) * press
+        val h = max(dp(if (intro < 1f) 1f else 26f), heightS.value + stretchS.value) * press
         val top = topS.value
         rect.set(cx - w / 2f, top, cx + w / 2f, top + h)
         val r = min(radiusS.value * press, h / 2f)
