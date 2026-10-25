@@ -478,11 +478,12 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
             canvas.translate(0f, -lift)
             canvas.scale(sc, sc, rect.centerX(), rect.top)
             if (alpha > 2) when (a.mode) {
-                IslandMode.MUSIC -> drawMusicExpanded(canvas, a, alpha)
-                IslandMode.MESSAGE -> drawMessageExpanded(canvas, a, alpha)
+                // Secondary elements (progress, buttons) trail the header by a beat.
+                IslandMode.MUSIC -> drawMusicExpanded(canvas, a, alpha, stagger(ea, 0.3f))
+                IslandMode.MESSAGE -> drawMessageExpanded(canvas, a, alpha, stagger(ea, 0.22f))
                 IslandMode.CALL -> drawCallExpanded(canvas, a, alpha)
                 IslandMode.CHARGING -> drawChargingExpanded(canvas, a, alpha)
-                IslandMode.TIMER -> if (liveTimer) drawTimerExpanded(canvas, a, alpha) else drawGenericExpanded(canvas, a, alpha)
+                IslandMode.TIMER -> if (liveTimer) drawTimerExpanded(canvas, a, alpha, stagger(ea, 0.22f)) else drawGenericExpanded(canvas, a, alpha)
                 else -> drawGenericExpanded(canvas, a, alpha)
             }
             canvas.restore()
@@ -805,6 +806,9 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
 
     private fun lerp(a: Float, b: Float, t: Float) = a + (b - a) * t
 
+    /** Alpha that starts rising only after [at] of the open progress, for staggered content. */
+    private fun stagger(ea: Float, at: Float) = (((ea - at) / (1f - at)).coerceIn(0f, 1f) * 255).toInt()
+
 
 
     /** While swiping away from an app, its art shrinks with the shape into the island. */
@@ -1011,7 +1015,7 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
                     a.durationMs > 0L && abs(e.y - barY) < dp(16f) &&
                     e.x >= barLeft - dp(12f) && e.x <= barRight + dp(12f)
                 if (seeking) seekFraction = fractionAt(e.x)
-                pressS.target = if (presentation == Presentation.EXPANDED) 0.985f else 0.93f
+                pressS.target = if (presentation == Presentation.EXPANDED) 0.985f else 0.94f
                 if (presentation == Presentation.COMPACT) postDelayed(longPress, LONG_PRESS_MS)
                 callbacks?.onInteraction()
                 settled = false
@@ -1179,7 +1183,6 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
 
     companion object {
         private val GREY = NothingStyle.muted
-        private val TIMER_ORANGE = NothingStyle.red
         private const val LONG_PRESS_MS = 350L
         private const val SHEEN_MS = 800L
         private const val INTRO_HOLD_MS = 190L
