@@ -7,7 +7,9 @@ Native Kotlin Android implementation of the live-activity island.
 1. Open the `android` directory in Android Studio.
 2. Let Android Studio install Android SDK 35 and sync Gradle.
 3. Run the `app` configuration on Android 8.0+.
-4. In the app, grant **Display over other apps**, then enable **Notification access**.
+4. In the app, grant **Display over other apps**, enable **Notification access**, and turn on
+   **Allow tapping over the status bar** (accessibility). On Android 13+ a sideloaded app's
+   accessibility switch is greyed out until you open App info → ⋮ → **Allow restricted settings**.
 5. Tap **Start Dynamic Island**.
 
 ## Build without Android Studio
@@ -23,6 +25,7 @@ Native Kotlin Android implementation of the live-activity island.
 
 - `IslandOverlayService`: system-level overlay backed by a foreground service.
 - `IslandNotificationListener`: maps call, media, navigation, timer, and message notifications into island states. For media, it reads the active `MediaSession` metadata and playback state, including artwork, duration, and the supported transport controls.
+- `IslandAccessibilityService`: owns no logic and reads no screen content; it only lets the island use an accessibility overlay, which sits above the status bar so taps at the top reach the island instead of opening the notification shade. Without it the island falls back to a normal overlay.
 - `IslandView`: native Canvas rendering with compact/expanded morphing, album art, animated playback progress, and tap targets for previous, play/pause, next, and seeking.
 
 The compact overlay only occupies the island's small touch bounds. It temporarily
