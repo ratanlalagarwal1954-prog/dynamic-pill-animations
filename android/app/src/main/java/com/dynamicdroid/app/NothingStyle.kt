@@ -13,6 +13,7 @@ object NothingStyle {
     val red = Color.rgb(235, 48, 48)
     val line = Color.rgb(55, 55, 55)
     val mono: Typeface = Typeface.create("monospace", Typeface.NORMAL)
+    val body: Typeface = Typeface.create("sans-serif", Typeface.NORMAL)
 
     fun panel(color: Int = surface) = GradientDrawable().apply {
         setColor(color)

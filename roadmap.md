@@ -1,4 +1,5 @@
 # Current work
+- [ ] Improve settings readability, large-text layout, touch targets and screen-reader labels while retaining the Nothing-inspired theme.
 - [x] Add saved size, pill width and horizontal/vertical placement controls with reset and camera alignment.
 - [x] Apply a Nothing-inspired monochrome, red-accent and dot-matrix visual theme.
 - [x] Test phone-fit bounds and existing countdown/motion rules with Kotlin regression checks.
