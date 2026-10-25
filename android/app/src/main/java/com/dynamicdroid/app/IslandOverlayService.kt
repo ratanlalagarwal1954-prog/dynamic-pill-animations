@@ -104,6 +104,7 @@ class IslandOverlayService : Service(), IslandBus.Listener, IslandView.Callbacks
                     handler.removeCallbacks(waitForUnlock)
                     handler.removeCallbacks(playIntro)
                     introArmed = true
+                    fullscreen = false
                     island?.hideForIntro()
                 }
                 Intent.ACTION_SCREEN_ON, Intent.ACTION_USER_PRESENT -> {

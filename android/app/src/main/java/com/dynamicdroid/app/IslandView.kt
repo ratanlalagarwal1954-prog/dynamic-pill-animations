@@ -123,6 +123,7 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         kick()
     }
 
+    private var sawStatusBar = false
     private var lastFullscreen: Boolean? = null
     private fun reportFullscreen(full: Boolean) {
         if (lastFullscreen == full) return
@@ -489,7 +490,12 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         }
         // Videos, photos and games hide the system status bar; overlays see that in their insets.
         if (anchorToCutout && Build.VERSION.SDK_INT >= 30) {
-            reportFullscreen(!insets.isVisible(WindowInsets.Type.statusBars()))
+            // Some windows (accessibility overlays, no-limits overlays) never see the status bar
+            // at all. Only trust "hidden" after this window has seen it visible, otherwise the
+            // island would stay tucked away forever.
+            val visible = insets.isVisible(WindowInsets.Type.statusBars())
+            if (visible) sawStatusBar = true
+            reportFullscreen(sawStatusBar && !visible)
         }
         return super.onApplyWindowInsets(insets)
     }
