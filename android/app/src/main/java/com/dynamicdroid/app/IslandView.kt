@@ -52,6 +52,8 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         fun onDismiss(activity: LiveActivity) {}
         fun onInteraction() {}
         fun onSettled() {}
+        /** Another app went fullscreen (video, photos, games) or came back out of it. */
+        fun onFullscreenChanged(fullscreen: Boolean) {}
     }
 
     var callbacks: Callbacks? = null
@@ -91,6 +93,43 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         invalidate()
     }
 
+    // Idle status bar data (time, network, battery). Redrawn only when it actually changes.
+    private var status = StatusInfo()
+    private val statusPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+        typeface = NothingStyle.mono; textSize = v(13f); fontFeatureSettings = "tnum"
+    }
+    private fun v(x: Float) = x * resources.displayMetrics.density
+
+    fun applyStatus(next: StatusInfo) {
+        if (next == status) return
+        status = next
+        if (presentation == Presentation.IDLE || idleA.value > 0.01f) invalidate()
+    }
+
+    /** Hide (fullscreen media) or bring back the island with a shrink-and-fade. */
+    var isConcealed = false
+        private set
+
+    fun setConcealed(hidden: Boolean) {
+        if (hidden == isConcealed) return
+        isConcealed = hidden
+        if (hidden) {
+            tracking = false; seeking = false
+            removeCallbacks(longPress)
+            pendingTap?.let { removeCallbacks(it) }; pendingTap = null
+        }
+        concealS.target = if (hidden) 0f else 1f
+        settled = false
+        kick()
+    }
+
+    private var lastFullscreen: Boolean? = null
+    private fun reportFullscreen(full: Boolean) {
+        if (lastFullscreen == full) return
+        lastFullscreen = full
+        callbacks?.onFullscreenChanged(full)
+    }
+
     private fun updateAnchor() {
         val physicalTop = if (anchorToCutout && fit.alignCamera) cameraTop ?: dp(8f) else dp(8f)
         baseTop = max(0f, physicalTop + dp(fit.offsetY)) / fit.scale
@@ -105,18 +144,23 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
     // Content and gesture feedback
     private val expandedA = Spring(0f, CONTENT_IN_K, 1f, 0.004f)
     private val compactA = Spring(0f, CONTENT_IN_K, 1f, 0.004f)
-    private val pressS = Spring(1f, 520f, 0.6f, 0.0008f)
+    // Stiffer press so the squish lands on the finger's first frame.
+    private val pressS = Spring(1f, 760f, 0.62f, 0.0008f)
     private val stretchS = Spring(0f, 360f, 0.62f, 0.5f)
     private val absorbS = Spring(0f, 120f, 1f, 0.004f)
     // Wake/unlock intro: 0 = hidden dot, 1 = fully present
     private val introS = Spring(1f, 160f, 0.7f, 0.002f)
+    // Status-bar content of the idle pill
+    private val idleA = Spring(0f, CONTENT_IN_K, 1f, 0.004f)
+    // 1 = shown, 0 = tucked away (fullscreen media)
+    private val concealS = Spring(1f, 230f, 0.9f, 0.003f)
     // Sheen that sweeps across the pill once the intro lands
     private var sheenStart = 0L
     // While the intro's first stage (dot -> circle) runs, show() must not widen the shape yet.
     private var introHoldUntil = 0L
     private val introWiden = Runnable { widenIntro() }
     private val shapeSprings = listOf(widthS, heightS, radiusS, topS)
-    private val springs = listOf(widthS, heightS, radiusS, topS, expandedA, compactA, pressS, stretchS, absorbS, introS)
+    private val springs = listOf(widthS, heightS, radiusS, topS, expandedA, compactA, pressS, stretchS, absorbS, introS, idleA, concealS)
 
     private val shapePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK }
     private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -175,7 +219,8 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
     }
 
     // Double tap: a second tap within the window toggles expand/collapse instead of opening.
-    private val doubleTapMs = ViewConfiguration.getDoubleTapTimeout().toLong().coerceIn(180L, 280L)
+    // Kept short so a single tap still feels immediate.
+    private val doubleTapMs = ViewConfiguration.getDoubleTapTimeout().toLong().coerceIn(160L, 210L)
     private var lastTapAt = 0L
     private var lastTapX = 0f
     private var lastTapY = 0f
@@ -242,6 +287,8 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         expandedA.stiffness = if (p == Presentation.EXPANDED) CONTENT_IN_K else CONTENT_OUT_K
         compactA.target = if (p == Presentation.COMPACT) 1f else 0f
         compactA.stiffness = if (p == Presentation.COMPACT) CONTENT_IN_K else CONTENT_OUT_K
+        idleA.target = if (p == Presentation.IDLE) 1f else 0f
+        idleA.stiffness = if (p == Presentation.IDLE) CONTENT_IN_K else CONTENT_OUT_K
     }
 
     /** Screen went off: collapse into an invisible dot so the next wake can grow out of it. */
@@ -325,7 +372,8 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
 
     private fun specFor(p: Presentation, a: LiveActivity?): Spec {
         val maxWidth = (resources.displayMetrics.widthPixels - dp(16f)) / fit.scale
-        if (p == Presentation.IDLE || a == null) return Spec(min(dp(104f) * fit.pillWidth, maxWidth), dp(32f), dp(16f))
+        // Idle = mini status bar, wide enough for time | camera | network + battery.
+        if (p == Presentation.IDLE || a == null) return Spec(min(dp(176f) * fit.pillWidth, maxWidth), dp(30f), dp(15f))
         if (p == Presentation.COMPACT) return Spec(min(dp(214f) * fit.pillWidth, maxWidth), dp(34f), dp(17f))
         val w = expandedWidth()
         return when (a.mode) {
@@ -434,12 +482,21 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
                 kick()
             }
         }
+        // Videos, photos and games hide the system status bar; overlays see that in their insets.
+        if (anchorToCutout && Build.VERSION.SDK_INT >= 30) {
+            reportFullscreen(!insets.isVisible(WindowInsets.Type.statusBars()))
+        }
         return super.onApplyWindowInsets(insets)
     }
 
     // ---------------------------------------------------------------- drawing
 
     override fun onDraw(canvas: Canvas) {
+        // Fully hidden (fullscreen video/photos): draw nothing at all.
+        val conceal = concealS.value.coerceIn(0f, 1f)
+        if (conceal < 0.01f) return
+        val layered = conceal < 0.995f
+        if (layered) canvas.saveLayerAlpha(0f, 0f, width.toFloat(), height.toFloat(), (conceal * 255).toInt())
         canvas.save()
         canvas.scale(fit.scale, fit.scale)
         val a = activity
@@ -447,8 +504,10 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         val cx = IslandFit.center(width.toFloat(), widthS.value * fit.scale, desired, dp(4f)) / fit.scale
         val intro = introS.value.coerceIn(0f, 1f)
         val press = pressS.value
-        val w = widthS.value * press
-        val h = max(dp(if (intro < 1f) 1f else 26f), heightS.value + stretchS.value) * press
+        // Hiding shrinks the island back into the camera as it fades.
+        val shrink = 0.35f + 0.65f * conceal
+        val w = widthS.value * press * shrink
+        val h = max(dp(if (intro < 1f) 1f else 26f), heightS.value + stretchS.value) * press * (0.6f + 0.4f * conceal)
         val top = topS.value
         rect.set(cx - w / 2f, top, cx + w / 2f, top + h)
         val r = min(radiusS.value * press, h / 2f)
@@ -457,7 +516,12 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         shapePaint.alpha = (255 * (1f - absorb * 0.3f) * min(1f, intro * 2.5f)).toInt()
         canvas.drawRoundRect(rect, r, r, shapePaint)
         drawSheen(canvas, r)
-        if (a == null) { canvas.restore(); return }
+        val sa = idleA.value.coerceIn(0f, 1f)
+        if (sa > 0.01f) {
+            val alpha = (((sa - 0.25f) / 0.75f).coerceIn(0f, 1f) * 255 * intro).toInt()
+            if (alpha > 2) drawStatus(canvas, alpha, sa)
+        }
+        if (a == null) { canvas.restore(); if (layered) canvas.restore(); return }
 
         clip.reset()
         clip.addRoundRect(rect, r, r, Path.Direction.CW)
@@ -505,6 +569,65 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         if (absorb > 0.01f) drawAbsorb(canvas, a, absorb)
         canvas.restore()
         canvas.restore()
+        if (layered) canvas.restore()
+    }
+
+    /** Idle island as a mini status bar: time on the left, network and battery on the right. */
+    private fun drawStatus(canvas: Canvas, alpha: Int, t: Float) {
+        val s = status
+        val cy = rect.centerY()
+        // Glyphs drift in from the centre (where the camera is) as the pill widens.
+        val inset = dp(13f) + (1f - t) * dp(10f)
+        if (s.time.isNotEmpty()) {
+            statusPaint.color = withAlpha(NothingStyle.foreground, alpha)
+            canvas.drawText(s.time, rect.left + inset, cy + statusPaint.textSize * 0.36f, statusPaint)
+        }
+        // Battery: outline, cap, level fill.
+        var right = rect.right - inset
+        if (s.battery >= 0) {
+            val bw = dp(21f); val bh = dp(10.5f)
+            val l = right - bw - dp(2f)
+            arcRect.set(l, cy - bh / 2f, l + bw, cy + bh / 2f)
+            fillPaint.style = Paint.Style.STROKE
+            fillPaint.strokeWidth = dp(1.2f)
+            fillPaint.color = withAlpha(NothingStyle.muted, alpha)
+            canvas.drawRoundRect(arcRect, dp(3f), dp(3f), fillPaint)
+            fillPaint.style = Paint.Style.FILL
+            canvas.drawRoundRect(l + bw + dp(0.6f), cy - dp(2.2f), l + bw + dp(2f), cy + dp(2.2f), dp(1f), dp(1f), fillPaint)
+            val level = s.battery.coerceIn(0, 100) / 100f
+            val color = when {
+                s.charging -> accentSoft
+                s.battery <= 15 -> NothingStyle.red
+                else -> NothingStyle.foreground
+            }
+            fillPaint.color = withAlpha(color, alpha)
+            val pad = dp(2.1f)
+            canvas.drawRoundRect(l + pad, cy - bh / 2f + pad, l + pad + (bw - pad * 2) * max(0.08f, level), cy + bh / 2f - pad, dp(1.5f), dp(1.5f), fillPaint)
+            if (s.charging) drawBolt(canvas, l + bw / 2f, cy, dp(8f), withAlpha(NothingStyle.background, alpha))
+            right = l - dp(7f)
+        }
+        // Network: wifi fan or four signal bars; a dim "x" style empty bars when offline.
+        if (s.wifi) {
+            ringPaint.strokeWidth = dp(1.6f)
+            val ox = right - dp(7f); val oy = cy + dp(4.5f)
+            for (i in 1..3) {
+                val rr = dp(3.2f) * i
+                val lit = s.bars >= i + 1 || (i == 1 && s.bars >= 0)
+                ringPaint.color = withAlpha(if (lit) NothingStyle.foreground else NothingStyle.line, alpha)
+                arcRect.set(ox - rr, oy - rr, ox + rr, oy + rr)
+                canvas.drawArc(arcRect, 225f, 90f, false, ringPaint)
+            }
+            fillPaint.color = withAlpha(NothingStyle.foreground, alpha)
+            canvas.drawCircle(ox, oy - dp(0.4f), dp(1.3f), fillPaint)
+        } else {
+            val bw = dp(2.6f); val gap = dp(1.5f)
+            for (i in 0 until 4) {
+                val l = right - (4 - i) * (bw + gap)
+                val bh = dp(3.5f) + i * dp(2.2f)
+                fillPaint.color = withAlpha(if (s.bars > i) NothingStyle.foreground else NothingStyle.line, alpha)
+                canvas.drawRoundRect(l, cy + dp(5f) - bh, l + bw, cy + dp(5f), dp(1f), dp(1f), fillPaint)
+            }
+        }
     }
 
     /** Soft wash of the app's colour (WhatsApp green, Spotify green, YouTube red...). */
