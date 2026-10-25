@@ -46,7 +46,9 @@ class MainActivity : AppCompatActivity() {
         val overlay = Settings.canDrawOverlays(this)
         buttons["overlay"]?.text = if (overlay) "✓  Island is on" else "Allow display over other apps"
         buttons["usage"]?.text = if (ForegroundWatcher.hasPermission(this)) "✓  Swipe-into-island is on" else "Allow usage access (swipe into island)"
-        if (overlay) startIsland()
+        val a11y = IslandAccessibilityService.isEnabled(this)
+        buttons["a11y"]?.text = if (a11y) "✓  Tapping at the very top works" else "Allow tapping over the status bar"
+        if (overlay || a11y) startIsland()
     }
 
     // ---------------------------------------------------------------- live preview
@@ -103,6 +105,7 @@ class MainActivity : AppCompatActivity() {
         title = "Pasta", subtitle = "Timer", appLabel = "Clock",
         appIcon = AppStyle.icon(this, "com.google.android.deskclock"), artwork = null,
         accent = AppStyle.accent(this, "com.google.android.deskclock"),
+        actions = listOf(IslandAction("Pause", selfIntent()), IslandAction("Cancel", selfIntent())),
         chronometerBase = System.currentTimeMillis() + 9 * 60_000L, chronometerCountDown = true,
     )
 
@@ -136,21 +139,21 @@ class MainActivity : AppCompatActivity() {
             callbacks = previewCallbacks
         }
         column.addView(FrameLayout(this).apply { addView(preview, FrameLayout.LayoutParams(-1, -1)) }, row(dp(200)))
-        column.addView(label("Try it: long-press to expand, swipe up to shrink, tap to open.", 12f, MUTED).apply {
+        column.addView(label("Try it: double-tap or long-press to expand, swipe up to shrink, tap to open.", 12f, MUTED).apply {
             gravity = Gravity.CENTER
         }, row(ViewGroup.LayoutParams.WRAP_CONTENT))
         val chips = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
         chips.addView(chip("Music") { showDemo(demoMusic(true), Presentation.EXPANDED) })
         chips.addView(chip("WhatsApp") { showDemo(demoMessage(), Presentation.EXPANDED) })
         chips.addView(chip("Call") { showDemo(demoCall(), Presentation.EXPANDED) })
-        chips.addView(chip("Timer") { showDemo(demoTimer(), Presentation.COMPACT) })
+        chips.addView(chip("Timer") { showDemo(demoTimer(), Presentation.EXPANDED) })
         column.addView(chips, row(dp(44)).apply { topMargin = dp(14) })
 
         column.addView(label("Your day,\nat a glance.", 40f, Color.WHITE).apply {
             gravity = Gravity.CENTER
             typeface = android.graphics.Typeface.DEFAULT_BOLD
         }, row(ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(28) })
-        column.addView(label("Turn on the three permissions below and the island goes live over every app.", 14f, MUTED).apply {
+        column.addView(label("Turn on the permissions below and the island goes live over every app.", 14f, MUTED).apply {
             gravity = Gravity.CENTER
             setLineSpacing(0f, 1.3f)
         }, row(ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(14) })
@@ -162,6 +165,10 @@ class MainActivity : AppCompatActivity() {
         }, row(dp(54)).apply { topMargin = dp(28) })
         column.addView(action("notifications", "Allow notification access") {
             startActivity(Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"))
+        }, row(dp(54)).apply { topMargin = dp(10) })
+        column.addView(action("a11y", "Allow tapping over the status bar") {
+            toast("Find Dynamic Droid under Installed apps. If it's greyed out: App info → ⋮ → Allow restricted settings.")
+            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
         }, row(dp(54)).apply { topMargin = dp(10) })
         column.addView(action("usage", "Allow usage access (swipe into island)") {
             startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
