@@ -61,6 +61,7 @@ class MainActivity : AppCompatActivity() {
         setContentView(buildScreen())
         if (Build.VERSION.SDK_INT >= 33) notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         showDemo(demoMusic(true), Presentation.EXPANDED)
+        applyThemeUpdate()
     }
 
     override fun onResume() {
