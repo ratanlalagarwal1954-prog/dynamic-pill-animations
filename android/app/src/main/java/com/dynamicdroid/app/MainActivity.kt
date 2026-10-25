@@ -4,11 +4,13 @@ import android.Manifest
 import android.app.PendingIntent
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Shader
+import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -40,10 +42,21 @@ class MainActivity : AppCompatActivity() {
     private var fit = IslandFit()
     private val fitSliders = ArrayList<SeekBar>()
     private var cameraSwitch: SwitchCompat? = null
+    private var theme = IslandTheme()
+    private var themeSwitch: SwitchCompat? = null
+    private var swatchA: View? = null
+    private var swatchB: View? = null
+    private val pickImage = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        val bmp = uri?.let {
+            runCatching { contentResolver.openInputStream(it)?.use(BitmapFactory::decodeStream) }.getOrNull()
+        }
+        if (bmp == null) toast("Couldn't read that image") else applyWallpaperTheme(WallpaperTheme.fromBitmap(bmp))
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         fit = IslandPreferences.read(this)
+        theme = IslandPreferences.readTheme(this)
         window.statusBarColor = BG
         setContentView(buildScreen())
         if (Build.VERSION.SDK_INT >= 33) notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
@@ -149,6 +162,7 @@ class MainActivity : AppCompatActivity() {
             anchorToCutout = false
             callbacks = previewCallbacks
             applyFit(fit.copy(offsetY = 0f))
+            applyTheme(theme)
         }
         column.addView(FrameLayout(this).apply { addView(preview, FrameLayout.LayoutParams(-1, -1)) }, row(dp(270)))
         val musicRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
