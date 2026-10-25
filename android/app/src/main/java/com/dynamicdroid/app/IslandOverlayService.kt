@@ -1,6 +1,7 @@
 package com.dynamicdroid.app
 
 import android.app.ActivityOptions
+import android.app.KeyguardManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -16,6 +17,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.PowerManager
 import android.provider.Settings
 import android.view.Gravity
 import android.view.WindowManager
@@ -299,6 +301,7 @@ class IslandOverlayService : Service(), IslandBus.Listener, IslandView.Callbacks
 
     override fun onExpandRequest() {
         if (transient != null || ongoing == null) return
+        timerPeek = false
         presentation = Presentation.EXPANDED
         render()
     }
@@ -400,9 +403,10 @@ class IslandOverlayService : Service(), IslandBus.Listener, IslandView.Callbacks
 
     override fun onDestroy() {
         if (IslandBus.listener === this) IslandBus.listener = null
+        IslandAccessibilityService.onChanged = null
         watcher?.stop()
         handler.removeCallbacksAndMessages(null)
-        island?.let { v -> runCatching { windowManager?.removeView(v) } }
+        detachWindow()
         runCatching { unregisterReceiver(powerReceiver) }
         runCatching { unregisterReceiver(wakeReceiver) }
         super.onDestroy()
@@ -423,5 +427,8 @@ class IslandOverlayService : Service(), IslandBus.Listener, IslandView.Callbacks
         private const val NOTIFICATION_ID = 7104
         private const val EXPANDED_TIMEOUT_MS = 6_000L
         private const val MESSAGE_TIMEOUT_MS = 5_000L
+        private const val TIMER_PEEK_MS = 2_600L
+        /** Lets the system's unlock animation finish so the intro is actually visible. */
+        private const val UNLOCK_SETTLE_MS = 320L
     }
 }
