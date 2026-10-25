@@ -241,6 +241,11 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         isClickable = true
         isFocusable = false
         refreshContentDescription()
+        // Pre-Android 11 fallback: legacy flag still reports when the foreground app hides the status bar.
+        @Suppress("DEPRECATION")
+        if (Build.VERSION.SDK_INT < 30) setOnSystemUiVisibilityChangeListener { flags ->
+            if (anchorToCutout) reportFullscreen(flags and View.SYSTEM_UI_FLAG_FULLSCREEN != 0)
+        }
     }
 
     // ---------------------------------------------------------------- public API
@@ -304,7 +309,7 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         introS.snap(0f)
         widthS.snap(dp(10f)); heightS.snap(dp(10f)); radiusS.snap(dp(5f))
         topS.snap(baseTop + dp(12f))
-        compactA.snap(0f); expandedA.snap(0f)
+        compactA.snap(0f); expandedA.snap(0f); idleA.snap(0f)
         sheenStart = 0L
         invalidate()
     }
@@ -1127,7 +1132,7 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
             MotionEvent.ACTION_DOWN -> {
                 hit.set(rect)
                 hit.inset(-dp(10f), -dp(10f))
-                if (!hit.contains(e.x, e.y)) return false
+                if (isConcealed || !hit.contains(e.x, e.y)) return false
                 tracking = true
                 dragging = false
                 longFired = false
@@ -1313,7 +1318,7 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         private const val SHAPE_K = 190f
         private const val WIDTH_DAMP = 0.72f
         private const val HEIGHT_DAMP = 0.8f
-        private const val CONTENT_IN_K = 130f
+        private const val CONTENT_IN_K = 150f
         private const val CONTENT_OUT_K = 420f
     }
 }
