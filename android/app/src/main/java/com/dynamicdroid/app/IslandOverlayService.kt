@@ -47,6 +47,9 @@ class IslandOverlayService : Service(), IslandBus.Listener, IslandView.Callbacks
     private var watcher: ForegroundWatcher? = null
     /** A newly started timer opens briefly, then morphs up into the pill. */
     private var timerPeek = false
+    /** Foreground app hid the status bar (video, photos, games): tuck the island away. */
+    private var fullscreen = false
+    private var status: StatusMonitor? = null
 
     private val clearTransient = Runnable { transient = null; render() }
     private val autoCollapse = Runnable {
@@ -135,6 +138,7 @@ class IslandOverlayService : Service(), IslandBus.Listener, IslandView.Callbacks
             ContextCompat.RECEIVER_EXPORTED
         )
         watcher = ForegroundWatcher(this, ::onForegroundChanged)
+        status = StatusMonitor(this) { info -> island?.applyStatus(info) }.also { it.start() }
         IslandAccessibilityService.onChanged = { handler.post { reattach() } }
         attachWindow()
         IslandBus.listener = this
@@ -171,6 +175,7 @@ class IslandOverlayService : Service(), IslandBus.Listener, IslandView.Callbacks
             it.callbacks = this
             it.applyFit(IslandPreferences.read(this))
             it.applyTheme(IslandPreferences.readTheme(this))
+            status?.let { m -> it.applyStatus(m.current) }
         }
         island = view
         val (w, h) = view.windowSizeFor(null, Presentation.IDLE)
@@ -224,10 +229,16 @@ class IslandOverlayService : Service(), IslandBus.Listener, IslandView.Callbacks
             o != null -> o to presentation
             else -> null to Presentation.IDLE
         }
-        // A settled idle window is touch-through; restore touches the moment something shows.
-        if (a != null) params?.let { lp ->
-            if (lp.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE != 0) {
-                lp.flags = lp.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
+        // Calls stay visible even over fullscreen video; everything else steps aside.
+        val concealed = fullscreen && a?.mode != IslandMode.CALL
+        view.setConcealed(concealed)
+        // A settled idle or hidden window is touch-through; restore touches the moment something shows.
+        params?.let { lp ->
+            val touchable = a != null && !concealed
+            val isOff = lp.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE != 0
+            if (touchable == isOff) {
+                lp.flags = if (touchable) lp.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
+                else lp.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
                 runCatching { windowManager?.updateViewLayout(view, lp) }
             }
         }
@@ -346,6 +357,12 @@ class IslandOverlayService : Service(), IslandBus.Listener, IslandView.Callbacks
 
     override fun onDismiss(activity: LiveActivity) = onCollapseRequest()
 
+    override fun onFullscreenChanged(fullscreen: Boolean) {
+        if (this.fullscreen == fullscreen) return
+        this.fullscreen = fullscreen
+        render()
+    }
+
     override fun onInteraction() {
         // Keep things open while the user is touching them.
         transient?.let {
@@ -375,7 +392,7 @@ class IslandOverlayService : Service(), IslandBus.Listener, IslandView.Callbacks
         }
         // Idle island: the window still spans the top for the next intro, so let touches
         // fall through to the app underneath instead of deadening that strip.
-        if (a == null && lp.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE == 0) {
+        if ((a == null || view.isConcealed) && lp.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE == 0) {
             lp.flags = lp.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
             changed = true
         }
@@ -439,6 +456,7 @@ class IslandOverlayService : Service(), IslandBus.Listener, IslandView.Callbacks
         if (IslandBus.listener === this) IslandBus.listener = null
         IslandAccessibilityService.onChanged = null
         watcher?.stop()
+        status?.stop()
         handler.removeCallbacksAndMessages(null)
         detachWindow()
         runCatching { unregisterReceiver(powerReceiver) }
