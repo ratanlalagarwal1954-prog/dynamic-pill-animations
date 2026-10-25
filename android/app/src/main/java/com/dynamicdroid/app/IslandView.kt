@@ -571,7 +571,7 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         }
         val right = rect.right - dp(12f)
         when (a.mode) {
-            IslandMode.MUSIC -> drawWave(canvas, right - dp(20f), cy, dp(20f), dp(14f), NothingStyle.foreground, a.isPlaying, alpha)
+            IslandMode.MUSIC -> drawWave(canvas, right - dp(20f), cy, dp(20f), dp(14f), waveColor, a.isPlaying, alpha)
             IslandMode.CALL -> {
                 val t = a.chronometerText()
                 if (t != null) text(canvas, t, right, cy + dp(4.5f), dp(80f), smallPaint, NothingStyle.muted, alpha, alignRight = true)
@@ -584,7 +584,7 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         }
     }
 
-    private fun drawMusicExpanded(canvas: Canvas, a: LiveActivity, alpha: Int) {
+    private fun drawMusicExpanded(canvas: Canvas, a: LiveActivity, alpha: Int, late: Int) {
         val pad = dp(22f)
         val l = rect.left + pad
         val t = rect.top + pad
@@ -593,24 +593,24 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         drawArtwork(canvas, a, l, t, art, dp(14f), alpha)
         val tx = l + art + dp(14f)
         val waveW = dp(24f)
-        drawWave(canvas, rr - waveW, t + dp(20f), waveW, dp(18f), NothingStyle.foreground, a.isPlaying, alpha)
+        drawWave(canvas, rr - waveW, t + dp(20f), waveW, dp(18f), waveColor, a.isPlaying, alpha)
         text(canvas, a.title, tx, t + dp(25f), rr - waveW - dp(12f) - tx, titlePaint, Color.WHITE, alpha)
         text(canvas, a.subtitle, tx, t + dp(46f), rr - tx, bodyPaint, GREY, alpha)
 
-        // Progress
+        // Progress (fades in a beat after the header, so the open doesn't pop all at once)
         barY = rect.top + dp(108f)
         val pos = if (seeking) (a.durationMs * seekFraction).toLong() else a.livePositionMs()
         val elapsed = formatDuration(pos)
         val remaining = "-" + formatDuration((a.durationMs - pos).coerceAtLeast(0L))
         barLeft = l + dp(44f)
         barRight = rr - dp(48f)
-        text(canvas, elapsed, l, barY + dp(4f), dp(40f), smallPaint, GREY, alpha)
-        text(canvas, remaining, rr, barY + dp(4f), dp(46f), smallPaint, GREY, alpha, alignRight = true)
+        text(canvas, elapsed, l, barY + dp(4f), dp(40f), smallPaint, GREY, late)
+        text(canvas, remaining, rr, barY + dp(4f), dp(46f), smallPaint, GREY, late, alignRight = true)
         val thick = if (seeking) dp(8f) else dp(5f)
         val fraction = if (a.durationMs > 0L) (pos.toFloat() / a.durationMs).coerceIn(0f, 1f) else 0f
-        fillPaint.color = withAlpha(Color.WHITE, alpha * 50 / 255)
+        fillPaint.color = withAlpha(waveColor, late * 50 / 255)
         canvas.drawRoundRect(barLeft, barY - thick / 2, barRight, barY + thick / 2, thick / 2, thick / 2, fillPaint)
-        fillPaint.color = withAlpha(Color.WHITE, alpha)
+        fillPaint.color = withAlpha(waveColor, late)
         if (fraction > 0f) canvas.drawRoundRect(
             barLeft, barY - thick / 2, barLeft + (barRight - barLeft) * fraction, barY + thick / 2,
             thick / 2, thick / 2, fillPaint
@@ -619,12 +619,12 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         // Controls
         val cy = rect.top + dp(146f)
         val cx = rect.centerX()
-        drawSkip(canvas, cx - dp(72f), cy, false, alpha)
-        drawPlayPause(canvas, cx, cy, a.isPlaying, alpha)
-        drawSkip(canvas, cx + dp(72f), cy, true, alpha)
+        drawSkip(canvas, cx - dp(72f), cy, false, late)
+        drawPlayPause(canvas, cx, cy, a.isPlaying, late)
+        drawSkip(canvas, cx + dp(72f), cy, true, late)
     }
 
-    private fun drawMessageExpanded(canvas: Canvas, a: LiveActivity, alpha: Int) {
+    private fun drawMessageExpanded(canvas: Canvas, a: LiveActivity, alpha: Int, late: Int) {
         val pad = dp(20f)
         val l = rect.left + pad
         val t = rect.top + dp(20f)
@@ -636,7 +636,7 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         text(canvas, a.appLabel, tx, t + dp(11f), rr - dp(40f) - tx, smallPaint, NothingStyle.foreground, alpha)
         text(canvas, a.title, tx, t + dp(30f), rr - tx, titlePaint, Color.WHITE, alpha)
         text(canvas, a.subtitle, tx, t + dp(48f), rr - tx, bodyPaint, GREY, alpha)
-        drawActions(canvas, a, l, rect.top + dp(84f), rr, alpha)
+        drawActions(canvas, a, l, rect.top + dp(84f), rr, late)
     }
 
     private fun drawCallExpanded(canvas: Canvas, a: LiveActivity, alpha: Int) {
@@ -658,7 +658,7 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         }
         if (accept != null) {
             val x = buttonsLeft - btn
-            drawCallButton(canvas, x, cy - btn / 2, btn, NothingStyle.muted, false, alpha)
+            drawCallButton(canvas, x, cy - btn / 2, btn, accentSoft, false, alpha)
             actionHits.add(RectF(x, cy - btn / 2, x + btn, cy + btn / 2) to accept)
             buttonsLeft = x - dp(12f)
         }
