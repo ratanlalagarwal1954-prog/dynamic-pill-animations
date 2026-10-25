@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <style name="Theme.DynamicDroid" parent="Theme.Material3.DayNight.NoActionBar">
-        <item name="android:fontFamily">sans</item>
-        <item name="android:colorAccent">#65D7FF</item>
-        <item name="android:navigationBarColor">#090A0C</item>
-        <item name="android:statusBarColor">#090A0C</item>
+        <item name="android:fontFamily">monospace</item>
+        <item name="android:colorAccent">#EB3030</item>
+        <item name="android:navigationBarColor">#0D0D0D</item>
+        <item name="android:statusBarColor">#0D0D0D</item>
         <item name="android:windowLightStatusBar">false</item>
     </style>
 </resources>

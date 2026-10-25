@@ -66,6 +66,22 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
     private fun dp(v: Float) = v * density
 
     private var baseTop = dp(8f)
+    private var fit = IslandFit()
+    private var cameraX: Float? = null
+    private var cameraTop: Float? = null
+
+    fun applyFit(next: IslandFit) {
+        fit = next.safe()
+        updateAnchor()
+        show(activity, presentation)
+        invalidate()
+    }
+
+    private fun updateAnchor() {
+        val physicalTop = if (anchorToCutout && fit.alignCamera) cameraTop ?: dp(8f) else dp(8f)
+        baseTop = max(0f, physicalTop + dp(fit.offsetY)) / fit.scale
+        if (!isAbsorbing) topS.target = baseTop
+    }
 
     // Shape. Softer, slower springs (~0.5s response) with a touch of bounce, like iOS.
     private val widthS = Spring(dp(104f), SHAPE_K, WIDTH_DAMP, 0.5f)
@@ -92,7 +108,7 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
     private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val imagePaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
-    private val medium = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+    private val medium = NothingStyle.mono
     private val titlePaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { typeface = medium; textSize = dp(16f) }
     private val bodyPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { textSize = dp(14f) }
     private val smallPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { typeface = medium; textSize = dp(11.5f) }
@@ -278,7 +294,7 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
     fun windowSizeFor(next: LiveActivity?, p: Presentation): Pair<Int, Int> {
         val spec = specFor(if (next == null) Presentation.IDLE else p, next)
         // A fixed horizontal origin avoids one-frame jumps when WindowManager relayouts.
-        return Pair(resources.displayMetrics.widthPixels, (baseTop + spec.h + dp(46f)).toInt())
+        return Pair(resources.displayMetrics.widthPixels, ((baseTop + spec.h + dp(46f)) * fit.scale).toInt())
     }
 
     val isAbsorbing: Boolean get() = absorbS.value > 0.002f
@@ -287,13 +303,14 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
 
     private data class Spec(val w: Float, val h: Float, val r: Float)
 
-    private fun expandedWidth() = min(resources.displayMetrics.widthPixels - dp(16f), dp(372f))
+    private fun expandedWidth() = min((resources.displayMetrics.widthPixels - dp(16f)) / fit.scale, dp(372f))
 
     private fun visibleActions(a: LiveActivity) = a.actions.take(3)
 
     private fun specFor(p: Presentation, a: LiveActivity?): Spec {
-        if (p == Presentation.IDLE || a == null) return Spec(dp(104f), dp(32f), dp(16f))
-        if (p == Presentation.COMPACT) return Spec(dp(214f), dp(34f), dp(17f))
+        val maxWidth = (resources.displayMetrics.widthPixels - dp(16f)) / fit.scale
+        if (p == Presentation.IDLE || a == null) return Spec(min(dp(104f) * fit.pillWidth, maxWidth), dp(32f), dp(16f))
+        if (p == Presentation.COMPACT) return Spec(min(dp(214f) * fit.pillWidth, maxWidth), dp(34f), dp(17f))
         val w = expandedWidth()
         return when (a.mode) {
             IslandMode.MUSIC -> Spec(w, dp(178f), dp(46f))
@@ -395,8 +412,9 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
             val cut = insets.displayCutout?.boundingRects
                 ?.minByOrNull { abs(it.exactCenterX() - dm.widthPixels / 2f) }
             if (cut != null && cut.top < dp(80f)) {
-                baseTop = max(dp(4f), cut.exactCenterY() - dp(17f))
-                if (!isAbsorbing) topS.target = baseTop
+                cameraTop = max(dp(4f), cut.exactCenterY() - dp(17f))
+                cameraX = cut.exactCenterX()
+                updateAnchor()
                 kick()
             }
         }
@@ -406,8 +424,11 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
     // ---------------------------------------------------------------- drawing
 
     override fun onDraw(canvas: Canvas) {
+        canvas.save()
+        canvas.scale(fit.scale, fit.scale)
         val a = activity
-        val cx = width / 2f
+        val desired = (if (anchorToCutout && fit.alignCamera) cameraX ?: width / 2f else width / 2f) + dp(fit.offsetX)
+        val cx = IslandFit.center(width.toFloat(), widthS.value * fit.scale, desired, dp(4f)) / fit.scale
         val intro = introS.value.coerceIn(0f, 1f)
         val press = pressS.value
         val w = widthS.value * press
@@ -420,7 +441,7 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         shapePaint.alpha = (255 * (1f - absorb * 0.3f) * min(1f, intro * 2.5f)).toInt()
         canvas.drawRoundRect(rect, r, r, shapePaint)
         drawSheen(canvas, r)
-        if (a == null) return
+        if (a == null) { canvas.restore(); return }
 
         clip.reset()
         clip.addRoundRect(rect, r, r, Path.Direction.CW)
@@ -465,6 +486,7 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         // The timer's ring and digits are shared between compact and expanded and morph between them.
         if (liveTimer) drawTimerMorph(canvas, a, ea, ca, intro)
         if (absorb > 0.01f) drawAbsorb(canvas, a, absorb)
+        canvas.restore()
         canvas.restore()
     }
 
@@ -948,6 +970,12 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
     // ---------------------------------------------------------------- touch
 
     override fun onTouchEvent(e: MotionEvent): Boolean {
+        val local = MotionEvent.obtain(e)
+        local.setLocation(e.x / fit.scale, e.y / fit.scale)
+        return try { handleTouch(local) } finally { local.recycle() }
+    }
+
+    private fun handleTouch(e: MotionEvent): Boolean {
         when (e.actionMasked) {
             MotionEvent.ACTION_OUTSIDE -> {
                 if (presentation == Presentation.EXPANDED) callbacks?.onCollapseRequest()
@@ -1134,8 +1162,8 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
     }
 
     companion object {
-        private val GREY = Color.rgb(152, 152, 159)
-        private val TIMER_ORANGE = Color.rgb(255, 159, 10)
+        private val GREY = NothingStyle.muted
+        private val TIMER_ORANGE = NothingStyle.red
         private const val LONG_PRESS_MS = 350L
         private const val SHEEN_MS = 800L
         private const val INTRO_HOLD_MS = 190L

@@ -142,6 +142,14 @@ class IslandOverlayService : Service(), IslandBus.Listener, IslandView.Callbacks
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (island == null && attachWindow()) render()
+        if (intent?.action == ACTION_FIT) {
+            island?.let { view ->
+                // Reserve vertical room before moving or scaling the island.
+                growWindow(resources.displayMetrics.widthPixels to resources.displayMetrics.heightPixels, false)
+                view.applyFit(IslandPreferences.read(this))
+                render()
+            }
+        }
         if (ongoing != null) watcher?.start()
         return START_STICKY
     }
@@ -156,7 +164,10 @@ class IslandOverlayService : Service(), IslandBus.Listener, IslandView.Callbacks
         val host: Context = a11y ?: this
         val wm = host.getSystemService(WINDOW_SERVICE) as WindowManager
         windowManager = wm
-        val view = IslandView(host).also { it.callbacks = this }
+        val view = IslandView(host).also {
+            it.callbacks = this
+            it.applyFit(IslandPreferences.read(this))
+        }
         island = view
         val (w, h) = view.windowSizeFor(null, Presentation.IDLE)
         val type = if (a11y != null) WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
@@ -429,6 +440,7 @@ class IslandOverlayService : Service(), IslandBus.Listener, IslandView.Callbacks
     }
 
     companion object {
+        const val ACTION_FIT = "com.dynamicdroid.app.UPDATE_FIT"
         private const val CHANNEL_ID = "dynamic_island"
         private const val NOTIFICATION_ID = 7104
         private const val EXPANDED_TIMEOUT_MS = 6_000L
