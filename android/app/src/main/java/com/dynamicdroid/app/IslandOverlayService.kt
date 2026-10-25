@@ -209,10 +209,14 @@ class IslandOverlayService : Service(), IslandBus.Listener, IslandView.Callbacks
             o != null -> o to presentation
             else -> null to Presentation.IDLE
         }
-        handler.removeCallbacks(autoCollapse)
-        if (t == null && p == Presentation.EXPANDED && a?.mode != IslandMode.CALL) {
-            val delay = if (timerPeek && a?.mode == IslandMode.TIMER) TIMER_PEEK_MS else EXPANDED_TIMEOUT_MS
-            handler.postDelayed(autoCollapse, delay)
+        val changedPresentation = view.activity?.key != a?.key || view.presentation != p
+        // Per-second notification updates must not keep restarting the timer's peek.
+        if (changedPresentation) {
+            handler.removeCallbacks(autoCollapse)
+            if (t == null && p == Presentation.EXPANDED && a?.mode != IslandMode.CALL) {
+                val delay = if (timerPeek && a?.mode == IslandMode.TIMER) TIMER_PEEK_MS else EXPANDED_TIMEOUT_MS
+                handler.postDelayed(autoCollapse, delay)
+            }
         }
         growWindow(view.windowSizeFor(a, p), absorb)
         view.show(a, p, absorb)
@@ -258,7 +262,9 @@ class IslandOverlayService : Service(), IslandBus.Listener, IslandView.Callbacks
         if (previous == o.packageName && pkg != o.packageName && transient == null) {
             // Swiped away from the app: fly it into the island.
             presentation = Presentation.COMPACT
-            render(absorb = true)
+            render(absorb = island?.activity == null &&
+                getSystemService(PowerManager::class.java)?.isInteractive == true &&
+                getSystemService(KeyguardManager::class.java)?.isKeyguardLocked == false)
         } else if (pkg == o.packageName || previous == o.packageName) {
             render()
         }

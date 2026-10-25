@@ -158,6 +158,7 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
 
     // Frame loop
     private var running = false
+    private var delayedFrame = false
     private var lastFrame = 0L
     private var settled = true
 
@@ -171,11 +172,16 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
 
     fun show(next: LiveActivity?, nextPresentation: Presentation, absorb: Boolean = false) {
         val p = if (next == null) Presentation.IDLE else nextPresentation
+        if (activity?.key != next?.key || presentation != p) {
+            pendingTap?.let { removeCallbacks(it) }; pendingTap = null
+        }
         activity = next
         presentation = p
         refreshContentDescription()
         // Mid-intro: the widen stage picks up the latest state itself.
         if (!absorb && SystemClock.uptimeMillis() < introHoldUntil) return
+        if (introS.value < 0.001f && introS.target == 0f) return
+        if (introHoldUntil == 0L && !sheenActive() && !isAbsorbing) restoreShapeSprings()
         val spec = specFor(p, next)
 
         if (absorb && next != null) {
@@ -210,6 +216,12 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
 
     /** Screen went off: collapse into an invisible dot so the next wake can grow out of it. */
     fun hideForIntro() {
+        Choreographer.getInstance().removeFrameCallback(this)
+        running = false; delayedFrame = false; lastFrame = 0L
+        tracking = false; seeking = false
+        removeCallbacks(longPress)
+        pendingTap?.let { removeCallbacks(it) }; pendingTap = null
+        pressS.snap(1f); stretchS.snap(0f); absorbS.snap(0f)
         removeCallbacks(introWiden)
         introHoldUntil = 0L
         introS.snap(0f)
@@ -265,7 +277,8 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
     /** Pixel size the overlay window needs for the current target state. */
     fun windowSizeFor(next: LiveActivity?, p: Presentation): Pair<Int, Int> {
         val spec = specFor(if (next == null) Presentation.IDLE else p, next)
-        return Pair((spec.w + dp(40f)).toInt(), (baseTop + spec.h + dp(46f)).toInt())
+        // A fixed horizontal origin avoids one-frame jumps when WindowManager relayouts.
+        return Pair(resources.displayMetrics.widthPixels, (baseTop + spec.h + dp(46f)).toInt())
     }
 
     val isAbsorbing: Boolean get() = absorbS.value > 0.002f
@@ -295,6 +308,11 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
     // ---------------------------------------------------------------- frame loop
 
     private fun kick() {
+        if (delayedFrame) {
+            Choreographer.getInstance().removeFrameCallback(this)
+            delayedFrame = false
+            running = false
+        }
         if (running) return
         running = true
         lastFrame = 0L
@@ -302,6 +320,7 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
     }
 
     override fun doFrame(frameTimeNanos: Long) {
+        delayedFrame = false
         if (!isAttachedToWindow || !isShown) { running = false; lastFrame = 0L; return }
         val dt = if (lastFrame == 0L) 1f / 60f else (frameTimeNanos - lastFrame) / 1_000_000_000f
         lastFrame = frameTimeNanos
@@ -319,7 +338,10 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         val continuous = continuousDelay()
         when {
             !rest || tracking || sheenActive() -> Choreographer.getInstance().postFrameCallback(this)
-            continuous != null -> { lastFrame = 0L; Choreographer.getInstance().postFrameCallbackDelayed(this, continuous) }
+            continuous != null -> {
+                lastFrame = 0L; delayedFrame = true
+                Choreographer.getInstance().postFrameCallbackDelayed(this, continuous)
+            }
             else -> running = false
         }
     }
@@ -335,16 +357,15 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
     private fun continuousDelay(): Long? {
         val a = activity ?: return null
         if (presentation == Presentation.IDLE) return null
-        val base = a.chronometerBase
         return when {
             a.mode == IslandMode.MUSIC && a.isPlaying -> 16L
             a.mode == IslandMode.CALL -> 33L
-            base != null -> {
+            a.clockBaseElapsed != null && a.pausedTimerMs == null -> {
                 // Smooth frames while a digit rolls, otherwise wake exactly at the next second.
                 if (rollAt != 0L && SystemClock.uptimeMillis() - rollAt < ROLL_MS) return 16L
-                val now = System.currentTimeMillis()
-                val toNext = if (a.chronometerCountDown) (base - now).mod(1000L) else 1000L - (now - base).mod(1000L)
-                (toNext + 8L).coerceIn(16L, 1000L)
+                val ms = a.clockMs() ?: return null
+                if (a.chronometerCountDown && ms == 0L) return null
+                ClockTimeline.nextTick(ms, a.chronometerCountDown).coerceIn(16L, 1000L)
             }
             else -> null
         }
@@ -387,14 +408,14 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
     override fun onDraw(canvas: Canvas) {
         val a = activity
         val cx = width / 2f
+        val intro = introS.value.coerceIn(0f, 1f)
         val press = pressS.value
         val w = widthS.value * press
-        val h = max(dp(26f), heightS.value + stretchS.value) * press
+        val h = max(dp(if (intro < 1f) 1f else 26f), heightS.value + stretchS.value) * press
         val top = topS.value
         rect.set(cx - w / 2f, top, cx + w / 2f, top + h)
         val r = min(radiusS.value * press, h / 2f)
         val absorb = absorbS.value.coerceIn(0f, 1f)
-        val intro = introS.value.coerceIn(0f, 1f)
 
         shapePaint.alpha = (255 * (1f - absorb * 0.3f) * min(1f, intro * 2.5f)).toInt()
         canvas.drawRoundRect(rect, r, r, shapePaint)
@@ -650,7 +671,7 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
 
     // ---------------------------------------------------------------- timer
 
-    private fun isLiveTimer(a: LiveActivity) = a.mode == IslandMode.TIMER && a.chronometerBase != null
+    private fun isLiveTimer(a: LiveActivity) = a.mode == IslandMode.TIMER && a.clockMs() != null
 
     /** Title and buttons; the ring and digits are drawn by drawTimerMorph. */
     private fun drawTimerExpanded(canvas: Canvas, a: LiveActivity, alpha: Int) {
@@ -660,16 +681,17 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         val tx = l + dp(42f) + dp(14f)
         val maxW = rr - dp(132f) - tx
         text(canvas, a.title, tx, cy - dp(3f), maxW, titlePaint, Color.WHITE, alpha)
-        text(canvas, if (a.chronometerCountDown) "Timer" else a.appLabel, tx, cy + dp(16f), maxW, bodyPaint, GREY, alpha)
+        text(canvas, if (a.pausedTimerMs != null) "Paused" else if (a.chronometerCountDown) "Timer" else a.appLabel, tx, cy + dp(16f), maxW, bodyPaint, GREY, alpha)
         drawActions(canvas, a, l, rect.top + dp(88f), rr, alpha)
     }
 
     private fun drawTimerMorph(canvas: Canvas, a: LiveActivity, ea: Float, ca: Float, intro: Float) {
-        val vis = max(ea, ca)
+        val vis = (ea + ca).coerceIn(0f, 1f)
         val alpha = (((vis - 0.2f) / 0.8f).coerceIn(0f, 1f) * 255 * intro).toInt()
         if (alpha < 3) return
         // 0 = compact layout, 1 = expanded layout
-        val m = (ea / max(ea + ca, 0.0001f)).coerceIn(0f, 1f)
+        val expandedHeight = specFor(Presentation.EXPANDED, a).h
+        val m = ((heightS.value - dp(34f)) / (expandedHeight - dp(34f))).coerceIn(0f, 1f)
         val eRing = dp(21f)
         val ringR = lerp(dp(8.5f), eRing, m)
         val ringX = lerp(rect.left + dp(18f), rect.left + dp(20f) + eRing, m)
@@ -696,10 +718,8 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
 
     /** Countdown: remaining share of the longest duration seen. Stopwatch: sweeps once a minute. */
     private fun timerFraction(a: LiveActivity): Float {
-        val base = a.chronometerBase ?: return 0f
-        val now = System.currentTimeMillis()
-        if (!a.chronometerCountDown) return (now - base).mod(60_000L) / 60_000f
-        val remaining = (base - now).coerceAtLeast(0L)
+        val remaining = a.clockMs() ?: return 0f
+        if (!a.chronometerCountDown) return remaining.mod(60_000L) / 60_000f
         if (timerTotals.size > 16 && a.key !in timerTotals) timerTotals.clear()
         val total = max(timerTotals[a.key] ?: 0L, remaining)
         timerTotals[a.key] = total
@@ -1053,7 +1073,8 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         val a = activity ?: return
         performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
         // Little squish so the gesture registers visually before the morph.
-        pressS.snap(0.9f); pressS.target = 1f
+        // Preserve velocity rather than teleporting the whole island on the second tap.
+        pressS.target = 1f
         when (presentation) {
             Presentation.COMPACT -> callbacks?.onExpandRequest()
             Presentation.EXPANDED -> if (!a.isTransient) callbacks?.onCollapseRequest() else callbacks?.onDismiss(a)

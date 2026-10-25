@@ -103,6 +103,19 @@ class IslandNotificationListener : NotificationListenerService() {
             .map { IslandAction(it.title?.toString().orEmpty(), it.actionIntent) }
             .filter { it.label.isNotBlank() }
 
+        val nativeCountDown = Build.VERSION.SDK_INT >= 24 && extras.getBoolean(Notification.EXTRA_CHRONOMETER_COUNT_DOWN)
+        val parsedRemaining = if (mode == IslandMode.TIMER && !chronometer) {
+            ClockTimeline.parseRemaining(text) ?: ClockTimeline.parseRemaining(title)
+        } else null
+        val paused = mode == IslandMode.TIMER && !chronometer &&
+            (actions.any { it.label.equals("Resume", ignoreCase = true) || it.label.equals("Start", ignoreCase = true) } ||
+                text.contains("paused", ignoreCase = true))
+        val base = when {
+            chronometer || mode == IslandMode.CALL -> n.`when`.takeIf { it > 0L }
+            parsedRemaining != null && !paused -> System.currentTimeMillis() + parsedRemaining
+            else -> null
+        }
+
         IslandBus.post(LiveActivity(
             key = sbn.key,
             packageName = sbn.packageName,
@@ -115,8 +128,9 @@ class IslandNotificationListener : NotificationListenerService() {
             accent = AppStyle.accent(this, sbn.packageName),
             contentIntent = n.contentIntent,
             actions = actions,
-            chronometerBase = if (chronometer || mode == IslandMode.CALL) n.`when`.takeIf { it > 0L } else null,
-            chronometerCountDown = Build.VERSION.SDK_INT >= 24 && extras.getBoolean(Notification.EXTRA_CHRONOMETER_COUNT_DOWN),
+            chronometerBase = base,
+            chronometerCountDown = nativeCountDown || parsedRemaining != null,
+            pausedTimerMs = if (paused) parsedRemaining else null,
         ))
     }
 
