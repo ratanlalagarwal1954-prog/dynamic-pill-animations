@@ -4,11 +4,13 @@ import android.Manifest
 import android.app.PendingIntent
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Shader
+import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -40,14 +42,26 @@ class MainActivity : AppCompatActivity() {
     private var fit = IslandFit()
     private val fitSliders = ArrayList<SeekBar>()
     private var cameraSwitch: SwitchCompat? = null
+    private var theme = IslandTheme()
+    private var themeSwitch: SwitchCompat? = null
+    private var swatchA: View? = null
+    private var swatchB: View? = null
+    private val pickImage = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        val bmp = uri?.let {
+            runCatching { contentResolver.openInputStream(it)?.use(BitmapFactory::decodeStream) }.getOrNull()
+        }
+        if (bmp == null) toast("Couldn't read that image") else applyWallpaperTheme(WallpaperTheme.fromBitmap(bmp))
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         fit = IslandPreferences.read(this)
+        theme = IslandPreferences.readTheme(this)
         window.statusBarColor = BG
         setContentView(buildScreen())
         if (Build.VERSION.SDK_INT >= 33) notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         showDemo(demoMusic(true), Presentation.EXPANDED)
+        applyThemeUpdate()
     }
 
     override fun onResume() {
@@ -149,6 +163,7 @@ class MainActivity : AppCompatActivity() {
             anchorToCutout = false
             callbacks = previewCallbacks
             applyFit(fit.copy(offsetY = 0f))
+            applyTheme(theme)
         }
         column.addView(FrameLayout(this).apply { addView(preview, FrameLayout.LayoutParams(-1, -1)) }, row(dp(270)))
         val musicRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
@@ -184,7 +199,37 @@ class MainActivity : AppCompatActivity() {
             cameraSwitch?.isChecked = true
             updateFit()
         }, row(-2))
-        column.addView(heading("( 03 )  CONNECTIONS"), row(-2).apply { topMargin = dp(28) })
+
+        column.addView(heading("( 03 )  WALLPAPER THEME"), row(-2).apply { topMargin = dp(28) })
+        themeSwitch = SwitchCompat(this).apply {
+            text = "Match island to wallpaper"
+            textSize = 16f
+            minHeight = dp(56)
+            setPadding(0, dp(12), 0, dp(12))
+            setTextColor(NothingStyle.foreground)
+            typeface = NothingStyle.body
+            isChecked = theme.enabled
+            buttonTintList = ColorStateList.valueOf(NothingStyle.red)
+            setOnCheckedChangeListener { _, checked -> theme = theme.copy(enabled = checked); applyThemeUpdate() }
+        }
+        column.addView(themeSwitch, row(-2))
+        val swatches = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(4), 0, dp(8))
+        }
+        swatchA = swatch().also { swatches.addView(it) }
+        swatchB = swatch().also { swatches.addView(it) }
+        swatches.addView(label("Island accent colours", 13f, NothingStyle.muted))
+        column.addView(swatches, row(-2))
+        column.addView(action("wallpaper", "Use my current wallpaper") {
+            applyWallpaperTheme(WallpaperTheme.fromSystem(this))
+        }, row(-2).apply { topMargin = dp(8) })
+        column.addView(action("pick", "Pick an image instead") {
+            pickImage.launch("image/*")
+        }, row(-2).apply { topMargin = dp(10) })
+
+        column.addView(heading("( 04 )  CONNECTIONS"), row(-2).apply { topMargin = dp(28) })
 
         column.addView(action("overlay", "Allow display over other apps") {
             if (!Settings.canDrawOverlays(this)) {
@@ -287,6 +332,43 @@ class MainActivity : AppCompatActivity() {
         preview.applyFit(fit.copy(offsetY = 0f))
         if (Settings.canDrawOverlays(this) || IslandAccessibilityService.isEnabled(this)) {
             ContextCompat.startForegroundService(this, Intent(this, IslandOverlayService::class.java).setAction(IslandOverlayService.ACTION_FIT))
+        }
+    }
+
+    // ---------------------------------------------------------------- wallpaper theme
+
+    private fun swatch() = View(this).apply {
+        layoutParams = LinearLayout.LayoutParams(dp(28), dp(28)).apply { marginEnd = dp(10) }
+        contentDescription = "Theme colour"
+    }
+
+    private fun applyWallpaperTheme(next: IslandTheme?) {
+        if (next == null) {
+            toast("Couldn't read colours from that")
+            return
+        }
+        theme = next.copy(enabled = true).safe()
+        themeSwitch?.isChecked = true
+        applyThemeUpdate()
+        toast("Island now matches your wallpaper")
+    }
+
+    private fun applyThemeUpdate() {
+        theme = theme.safe()
+        IslandPreferences.saveTheme(this, theme)
+        preview.applyTheme(theme)
+        swatchA?.background = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(if (theme.enabled) theme.accent else NothingStyle.red)
+            setStroke(2, NothingStyle.line)
+        }
+        swatchB?.background = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(if (theme.enabled) theme.secondary else NothingStyle.muted)
+            setStroke(2, NothingStyle.line)
+        }
+        if (Settings.canDrawOverlays(this) || IslandAccessibilityService.isEnabled(this)) {
+            ContextCompat.startForegroundService(this, Intent(this, IslandOverlayService::class.java).setAction(IslandOverlayService.ACTION_THEME))
         }
     }
 

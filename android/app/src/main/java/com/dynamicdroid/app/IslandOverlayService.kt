@@ -150,6 +150,9 @@ class IslandOverlayService : Service(), IslandBus.Listener, IslandView.Callbacks
                 render()
             }
         }
+        if (intent?.action == ACTION_THEME) {
+            island?.applyTheme(IslandPreferences.readTheme(this))
+        }
         if (ongoing != null) watcher?.start()
         return START_STICKY
     }
@@ -167,6 +170,7 @@ class IslandOverlayService : Service(), IslandBus.Listener, IslandView.Callbacks
         val view = IslandView(host).also {
             it.callbacks = this
             it.applyFit(IslandPreferences.read(this))
+            it.applyTheme(IslandPreferences.readTheme(this))
         }
         island = view
         val (w, h) = view.windowSizeFor(null, Presentation.IDLE)
@@ -219,6 +223,13 @@ class IslandOverlayService : Service(), IslandBus.Listener, IslandView.Callbacks
             t != null -> t to Presentation.EXPANDED
             o != null -> o to presentation
             else -> null to Presentation.IDLE
+        }
+        // A settled idle window is touch-through; restore touches the moment something shows.
+        if (a != null) params?.let { lp ->
+            if (lp.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE != 0) {
+                lp.flags = lp.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
+                runCatching { windowManager?.updateViewLayout(view, lp) }
+            }
         }
         val changedPresentation = view.activity?.key != a?.key || view.presentation != p
         // Per-second notification updates must not keep restarting the timer's peek.
@@ -362,6 +373,12 @@ class IslandOverlayService : Service(), IslandBus.Listener, IslandView.Callbacks
             lp.height = h
             changed = true
         }
+        // Idle island: the window still spans the top for the next intro, so let touches
+        // fall through to the app underneath instead of deadening that strip.
+        if (a == null && lp.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE == 0) {
+            lp.flags = lp.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+            changed = true
+        }
         if (changed) runCatching { windowManager?.updateViewLayout(view, lp) }
     }
 
@@ -441,6 +458,7 @@ class IslandOverlayService : Service(), IslandBus.Listener, IslandView.Callbacks
 
     companion object {
         const val ACTION_FIT = "com.dynamicdroid.app.UPDATE_FIT"
+        const val ACTION_THEME = "com.dynamicdroid.app.UPDATE_THEME"
         private const val CHANNEL_ID = "dynamic_island"
         private const val NOTIFICATION_ID = 7104
         private const val EXPANDED_TIMEOUT_MS = 6_000L

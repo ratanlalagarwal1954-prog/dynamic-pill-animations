@@ -2,12 +2,16 @@ package com.dynamicdroid.app
 
 import kotlin.math.abs
 
-/** Run with kotlinc ClockTimeline.kt Spring.kt ClockMotionTest.kt -include-runtime -d tests.jar. */
+/** Run with kotlinc ClockTimeline.kt Spring.kt IslandTheme.kt ClockMotionTest.kt -include-runtime -d tests.jar. */
 fun main() {
     val fit = IslandFit(scale = 2f, pillWidth = 2f, offsetX = -900f, offsetY = 900f).safe()
     check(fit.scale == 1.3f && fit.pillWidth == 1.5f)
     check(fit.offsetX == -180f && fit.offsetY == 160f)
     check(IslandFit().safe() == IslandFit())
+    // Wallpaper theme colours must be opaque so accents read on the black island.
+    check(IslandTheme(true, 0x00123456, 0x00ABCDEF).safe().accent == 0xFF123456.toInt())
+    check(IslandTheme(true, 0x00123456, 0x00ABCDEF).safe().secondary == 0xFFABCDEF.toInt())
+    check(IslandTheme().safe() == IslandTheme())
     // Compact and expanded islands cannot disappear past either edge on narrow phones.
     check(IslandFit.center(360f, 214f, 0f, 4f) == 111f)
     check(IslandFit.center(360f, 214f, 500f, 4f) == 249f)

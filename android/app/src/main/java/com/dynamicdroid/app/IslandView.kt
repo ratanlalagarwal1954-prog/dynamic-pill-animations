@@ -77,6 +77,20 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         invalidate()
     }
 
+    // Wallpaper theme: the island stays monochrome, but accents (timer ring, waves,
+    // progress, supporting buttons) take the wallpaper's colours when enabled.
+    private var accent = NothingStyle.red
+    private var accentSoft = NothingStyle.muted
+    private var waveColor = NothingStyle.foreground
+
+    fun applyTheme(theme: IslandTheme) {
+        val t = theme.safe()
+        accent = if (t.enabled) t.accent else NothingStyle.red
+        accentSoft = if (t.enabled) t.secondary else NothingStyle.muted
+        waveColor = if (t.enabled) t.accent else NothingStyle.foreground
+        invalidate()
+    }
+
     private fun updateAnchor() {
         val physicalTop = if (anchorToCutout && fit.alignCamera) cameraTop ?: dp(8f) else dp(8f)
         baseTop = max(0f, physicalTop + dp(fit.offsetY)) / fit.scale
@@ -294,7 +308,9 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
     fun windowSizeFor(next: LiveActivity?, p: Presentation): Pair<Int, Int> {
         val spec = specFor(if (next == null) Presentation.IDLE else p, next)
         // A fixed horizontal origin avoids one-frame jumps when WindowManager relayouts.
-        return Pair(resources.displayMetrics.widthPixels, ((baseTop + spec.h + dp(46f)) * fit.scale).toInt())
+        // Keep the bottom slack tiny: the window eats touches wherever it covers, so a tall
+        // idle window would deaden a strip of the screen under the island.
+        return Pair(resources.displayMetrics.widthPixels, ((baseTop + spec.h + dp(14f)) * fit.scale).toInt())
     }
 
     val isAbsorbing: Boolean get() = absorbS.value > 0.002f
@@ -462,11 +478,12 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
             canvas.translate(0f, -lift)
             canvas.scale(sc, sc, rect.centerX(), rect.top)
             if (alpha > 2) when (a.mode) {
-                IslandMode.MUSIC -> drawMusicExpanded(canvas, a, alpha)
-                IslandMode.MESSAGE -> drawMessageExpanded(canvas, a, alpha)
+                // Secondary elements (progress, buttons) trail the header by a beat.
+                IslandMode.MUSIC -> drawMusicExpanded(canvas, a, alpha, stagger(ea, 0.3f))
+                IslandMode.MESSAGE -> drawMessageExpanded(canvas, a, alpha, stagger(ea, 0.22f))
                 IslandMode.CALL -> drawCallExpanded(canvas, a, alpha)
                 IslandMode.CHARGING -> drawChargingExpanded(canvas, a, alpha)
-                IslandMode.TIMER -> if (liveTimer) drawTimerExpanded(canvas, a, alpha) else drawGenericExpanded(canvas, a, alpha)
+                IslandMode.TIMER -> if (liveTimer) drawTimerExpanded(canvas, a, alpha, stagger(ea, 0.22f)) else drawGenericExpanded(canvas, a, alpha)
                 else -> drawGenericExpanded(canvas, a, alpha)
             }
             canvas.restore()
@@ -546,7 +563,7 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
                 canvas.drawCircle(l + s / 2, cy, s / 2, fillPaint)
                 drawPhone(canvas, l + s / 2, cy, dp(13f), alpha, false)
             }
-            IslandMode.CHARGING -> drawBolt(canvas, l + s / 2, cy, dp(14f), withAlpha(NothingStyle.muted, alpha))
+            IslandMode.CHARGING -> drawBolt(canvas, l + s / 2, cy, dp(14f), withAlpha(accentSoft, alpha))
             else -> {
                 val img = a.artwork ?: a.appIcon
                 if (img != null) drawImage(canvas, img, l, cy - s / 2, s, s / 2, alpha)
@@ -555,7 +572,7 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         }
         val right = rect.right - dp(12f)
         when (a.mode) {
-            IslandMode.MUSIC -> drawWave(canvas, right - dp(20f), cy, dp(20f), dp(14f), NothingStyle.foreground, a.isPlaying, alpha)
+            IslandMode.MUSIC -> drawWave(canvas, right - dp(20f), cy, dp(20f), dp(14f), waveColor, a.isPlaying, alpha)
             IslandMode.CALL -> {
                 val t = a.chronometerText()
                 if (t != null) text(canvas, t, right, cy + dp(4.5f), dp(80f), smallPaint, NothingStyle.muted, alpha, alignRight = true)
@@ -568,7 +585,7 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         }
     }
 
-    private fun drawMusicExpanded(canvas: Canvas, a: LiveActivity, alpha: Int) {
+    private fun drawMusicExpanded(canvas: Canvas, a: LiveActivity, alpha: Int, late: Int) {
         val pad = dp(22f)
         val l = rect.left + pad
         val t = rect.top + pad
@@ -577,24 +594,24 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         drawArtwork(canvas, a, l, t, art, dp(14f), alpha)
         val tx = l + art + dp(14f)
         val waveW = dp(24f)
-        drawWave(canvas, rr - waveW, t + dp(20f), waveW, dp(18f), NothingStyle.foreground, a.isPlaying, alpha)
+        drawWave(canvas, rr - waveW, t + dp(20f), waveW, dp(18f), waveColor, a.isPlaying, alpha)
         text(canvas, a.title, tx, t + dp(25f), rr - waveW - dp(12f) - tx, titlePaint, Color.WHITE, alpha)
         text(canvas, a.subtitle, tx, t + dp(46f), rr - tx, bodyPaint, GREY, alpha)
 
-        // Progress
+        // Progress (fades in a beat after the header, so the open doesn't pop all at once)
         barY = rect.top + dp(108f)
         val pos = if (seeking) (a.durationMs * seekFraction).toLong() else a.livePositionMs()
         val elapsed = formatDuration(pos)
         val remaining = "-" + formatDuration((a.durationMs - pos).coerceAtLeast(0L))
         barLeft = l + dp(44f)
         barRight = rr - dp(48f)
-        text(canvas, elapsed, l, barY + dp(4f), dp(40f), smallPaint, GREY, alpha)
-        text(canvas, remaining, rr, barY + dp(4f), dp(46f), smallPaint, GREY, alpha, alignRight = true)
+        text(canvas, elapsed, l, barY + dp(4f), dp(40f), smallPaint, GREY, late)
+        text(canvas, remaining, rr, barY + dp(4f), dp(46f), smallPaint, GREY, late, alignRight = true)
         val thick = if (seeking) dp(8f) else dp(5f)
         val fraction = if (a.durationMs > 0L) (pos.toFloat() / a.durationMs).coerceIn(0f, 1f) else 0f
-        fillPaint.color = withAlpha(Color.WHITE, alpha * 50 / 255)
+        fillPaint.color = withAlpha(waveColor, late * 50 / 255)
         canvas.drawRoundRect(barLeft, barY - thick / 2, barRight, barY + thick / 2, thick / 2, thick / 2, fillPaint)
-        fillPaint.color = withAlpha(Color.WHITE, alpha)
+        fillPaint.color = withAlpha(waveColor, late)
         if (fraction > 0f) canvas.drawRoundRect(
             barLeft, barY - thick / 2, barLeft + (barRight - barLeft) * fraction, barY + thick / 2,
             thick / 2, thick / 2, fillPaint
@@ -603,12 +620,12 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         // Controls
         val cy = rect.top + dp(146f)
         val cx = rect.centerX()
-        drawSkip(canvas, cx - dp(72f), cy, false, alpha)
-        drawPlayPause(canvas, cx, cy, a.isPlaying, alpha)
-        drawSkip(canvas, cx + dp(72f), cy, true, alpha)
+        drawSkip(canvas, cx - dp(72f), cy, false, late)
+        drawPlayPause(canvas, cx, cy, a.isPlaying, late)
+        drawSkip(canvas, cx + dp(72f), cy, true, late)
     }
 
-    private fun drawMessageExpanded(canvas: Canvas, a: LiveActivity, alpha: Int) {
+    private fun drawMessageExpanded(canvas: Canvas, a: LiveActivity, alpha: Int, late: Int) {
         val pad = dp(20f)
         val l = rect.left + pad
         val t = rect.top + dp(20f)
@@ -620,7 +637,7 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         text(canvas, a.appLabel, tx, t + dp(11f), rr - dp(40f) - tx, smallPaint, NothingStyle.foreground, alpha)
         text(canvas, a.title, tx, t + dp(30f), rr - tx, titlePaint, Color.WHITE, alpha)
         text(canvas, a.subtitle, tx, t + dp(48f), rr - tx, bodyPaint, GREY, alpha)
-        drawActions(canvas, a, l, rect.top + dp(84f), rr, alpha)
+        drawActions(canvas, a, l, rect.top + dp(84f), rr, late)
     }
 
     private fun drawCallExpanded(canvas: Canvas, a: LiveActivity, alpha: Int) {
@@ -642,7 +659,7 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         }
         if (accept != null) {
             val x = buttonsLeft - btn
-            drawCallButton(canvas, x, cy - btn / 2, btn, NothingStyle.muted, false, alpha)
+            drawCallButton(canvas, x, cy - btn / 2, btn, accentSoft, false, alpha)
             actionHits.add(RectF(x, cy - btn / 2, x + btn, cy + btn / 2) to accept)
             buttonsLeft = x - dp(12f)
         }
@@ -677,7 +694,7 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         val cy = rect.centerY()
         val l = rect.left + dp(22f)
         val rr = rect.right - dp(22f)
-        drawBolt(canvas, l + dp(9f), cy, dp(18f), withAlpha(NothingStyle.muted, alpha))
+        drawBolt(canvas, l + dp(9f), cy, dp(18f), withAlpha(accentSoft, alpha))
         text(canvas, "Charging", l + dp(26f), cy + dp(6f), dp(140f), titlePaint, Color.WHITE, alpha)
         // Battery pill
         val bw = dp(34f)
@@ -696,7 +713,7 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
     private fun isLiveTimer(a: LiveActivity) = a.mode == IslandMode.TIMER && a.clockMs() != null
 
     /** Title and buttons; the ring and digits are drawn by drawTimerMorph. */
-    private fun drawTimerExpanded(canvas: Canvas, a: LiveActivity, alpha: Int) {
+    private fun drawTimerExpanded(canvas: Canvas, a: LiveActivity, alpha: Int, late: Int) {
         val l = rect.left + dp(20f)
         val rr = rect.right - dp(20f)
         val cy = rect.top + dp(44f)
@@ -704,7 +721,7 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         val maxW = rr - dp(132f) - tx
         text(canvas, a.title, tx, cy - dp(3f), maxW, titlePaint, Color.WHITE, alpha)
         text(canvas, if (a.pausedTimerMs != null) "Paused" else if (a.chronometerCountDown) "Timer" else a.appLabel, tx, cy + dp(16f), maxW, bodyPaint, GREY, alpha)
-        drawActions(canvas, a, l, rect.top + dp(88f), rr, alpha)
+        drawActions(canvas, a, l, rect.top + dp(88f), rr, late)
     }
 
     private fun drawTimerMorph(canvas: Canvas, a: LiveActivity, ea: Float, ca: Float, intro: Float) {
@@ -730,10 +747,10 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
     private fun drawRing(canvas: Canvas, cx: Float, cy: Float, r: Float, stroke: Float, fraction: Float, alpha: Int) {
         ringPaint.strokeWidth = stroke
         arcRect.set(cx - r, cy - r, cx + r, cy + r)
-        ringPaint.color = withAlpha(TIMER_ORANGE, alpha * 70 / 255)
+        ringPaint.color = withAlpha(accent, alpha * 70 / 255)
         canvas.drawOval(arcRect, ringPaint)
         if (fraction > 0.001f) {
-            ringPaint.color = withAlpha(TIMER_ORANGE, alpha)
+            ringPaint.color = withAlpha(accent, alpha)
             canvas.drawArc(arcRect, -90f, 360f * fraction, false, ringPaint)
         }
     }
@@ -775,12 +792,12 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
             val w = p.measureText(s)
             val old = if (sameShape) prev[i] else ch
             if (old != ch && e < 1f) {
-                p.color = withAlpha(TIMER_ORANGE, (alpha * (1f - e)).toInt())
+                p.color = withAlpha(accent, (alpha * (1f - e)).toInt())
                 canvas.drawText(old.toString(), x, baseline + dir * e * shift, p)
-                p.color = withAlpha(TIMER_ORANGE, (alpha * e).toInt())
+                p.color = withAlpha(accent, (alpha * e).toInt())
                 canvas.drawText(s, x, baseline - dir * (1f - e) * shift, p)
             } else {
-                p.color = withAlpha(TIMER_ORANGE, alpha)
+                p.color = withAlpha(accent, alpha)
                 canvas.drawText(s, x, baseline, p)
             }
             x += w
@@ -788,6 +805,9 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
     }
 
     private fun lerp(a: Float, b: Float, t: Float) = a + (b - a) * t
+
+    /** Alpha that starts rising only after [at] of the open progress, for staggered content. */
+    private fun stagger(ea: Float, at: Float) = (((ea - at) / (1f - at)).coerceIn(0f, 1f) * 255).toInt()
 
 
 
@@ -995,7 +1015,7 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
                     a.durationMs > 0L && abs(e.y - barY) < dp(16f) &&
                     e.x >= barLeft - dp(12f) && e.x <= barRight + dp(12f)
                 if (seeking) seekFraction = fractionAt(e.x)
-                pressS.target = if (presentation == Presentation.EXPANDED) 0.985f else 0.93f
+                pressS.target = if (presentation == Presentation.EXPANDED) 0.985f else 0.94f
                 if (presentation == Presentation.COMPACT) postDelayed(longPress, LONG_PRESS_MS)
                 callbacks?.onInteraction()
                 settled = false
@@ -1163,7 +1183,6 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
 
     companion object {
         private val GREY = NothingStyle.muted
-        private val TIMER_ORANGE = NothingStyle.red
         private const val LONG_PRESS_MS = 350L
         private const val SHEEN_MS = 800L
         private const val INTRO_HOLD_MS = 190L
