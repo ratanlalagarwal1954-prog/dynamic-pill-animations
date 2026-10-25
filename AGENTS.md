@@ -20,3 +20,4 @@
 - Wallpaper theming flows WallpaperTheme (extraction) → IslandPreferences (persistence) → IslandView.applyTheme; the island stays monochrome and only accents (timer ring, waves, progress, supporting buttons) take the wallpaper colours.
 - The settled idle overlay window must be FLAG_NOT_TOUCHABLE with minimal height so it never deadens the screen strip it covers; render() restores touchability the moment an activity shows.
 - Native settings use wrap-content text controls with minimum touch sizes and labelled platform widgets so system font scaling and accessibility services remain usable.
+- The idle island is a mini status bar fed by StatusMonitor (broadcasts + network callback, slow signal poll); IslandView hides itself via concealS when window insets report the status bar hidden (fullscreen media), and the service makes that window touch-through, because overlays cannot otherwise know another app is fullscreen.
