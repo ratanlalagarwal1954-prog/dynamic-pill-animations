@@ -137,15 +137,8 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
     private fun updateAnchor() {
         val physicalTop = if (anchorToCutout && fit.alignCamera) cameraTop ?: dp(8f) else dp(8f)
         baseTop = max(0f, physicalTop + dp(fit.offsetY)) / fit.scale
-        if (!isAbsorbing) topS.target = topTargetFor(presentation)
+        if (!isAbsorbing) topS.target = baseTop
     }
-
-    /**
-     * Idle and compact are a full-width bar flush with the top of the screen, covering the
-     * system status bar (the island draws its own time/network/battery instead). Only the
-     * expanded card floats lower, below the camera.
-     */
-    private fun topTargetFor(p: Presentation) = if (p == Presentation.EXPANDED) max(baseTop, dp(2f)) else 0f
 
     // Shape. Softer, slower springs (~0.5s response) with a touch of bounce, like iOS.
     private val widthS = Spring(dp(104f), SHAPE_K, WIDTH_DAMP, 0.5f)
@@ -290,7 +283,7 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         widthS.target = spec.w
         heightS.target = spec.h
         radiusS.target = spec.r
-        topS.target = topTargetFor(p)
+        topS.target = baseTop
         absorbS.target = 0f
         setContentTargets(p)
         settled = false
@@ -353,7 +346,7 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         heightS.stiffness = 170f; heightS.dampingRatio = 0.72f
         radiusS.stiffness = 170f; radiusS.dampingRatio = 0.85f
         widthS.target = spec.w; heightS.target = spec.h; radiusS.target = spec.r
-        topS.target = topTargetFor(presentation)
+        topS.target = baseTop
         setContentTargets(presentation)
         sheenStart = SystemClock.uptimeMillis() + 300L
         settled = false
@@ -375,7 +368,7 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         // A fixed horizontal origin avoids one-frame jumps when WindowManager relayouts.
         // Keep the bottom slack tiny: the window eats touches wherever it covers, so a tall
         // idle window would deaden a strip of the screen under the island.
-        return Pair(resources.displayMetrics.widthPixels, ((topTargetFor(effective) + spec.h + dp(14f)) * fit.scale).toInt())
+        return Pair(resources.displayMetrics.widthPixels, ((baseTop + spec.h + dp(14f)) * fit.scale).toInt())
     }
 
     val isAbsorbing: Boolean get() = absorbS.value > 0.002f
@@ -384,17 +377,17 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
 
     private data class Spec(val w: Float, val h: Float, val r: Float)
 
-    private fun expandedWidth() = min((resources.displayMetrics.widthPixels - dp(16f)) / fit.scale, dp(372f))
+    /** Expanded cards cover the whole screen width, minus a small margin on each side. */
+    private fun expandedWidth() = (resources.displayMetrics.widthPixels - dp(16f)) / fit.scale
 
     private fun visibleActions(a: LiveActivity) = a.actions.take(3)
 
     private fun specFor(p: Presentation, a: LiveActivity?): Spec {
         val maxWidth = (resources.displayMetrics.widthPixels - dp(16f)) / fit.scale
-        // Idle and compact are a full-width bar over the status bar: the island draws its
-        // own time, network and battery, so it replaces what it covers.
-        val fullWidth = resources.displayMetrics.widthPixels / fit.scale
-        if (p == Presentation.IDLE || a == null) return Spec(fullWidth, dp(30f), 0f)
-        if (p == Presentation.COMPACT) return Spec(fullWidth, dp(36f), 0f)
+        // Idle and compact are floating pills around the camera, like iOS. The pill-width
+        // fit slider sizes them; the island draws its own time, network and battery inside.
+        if (p == Presentation.IDLE || a == null) return Spec(min(dp(200f) * fit.pillWidth, maxWidth), dp(32f), dp(16f))
+        if (p == Presentation.COMPACT) return Spec(min(dp(232f) * fit.pillWidth, maxWidth), dp(36f), dp(18f))
         val w = expandedWidth()
         return when (a.mode) {
             IslandMode.MUSIC -> Spec(w, dp(178f), dp(46f))
