@@ -140,7 +140,8 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         if (!isAbsorbing) topS.target = baseTop
     }
 
-    // Shape. Softer, slower springs (~0.5s response) with a touch of bounce, like iOS.
+    // Shape. Soft springs (~0.5s response) with a generous bounce, like the iOS island
+    // (low stiffness, ~0.6 damping: the pill visibly overshoots and settles).
     private val widthS = Spring(dp(104f), SHAPE_K, WIDTH_DAMP, 0.5f)
     private val heightS = Spring(dp(32f), SHAPE_K, HEIGHT_DAMP, 0.5f)
     private val radiusS = Spring(dp(16f), SHAPE_K, 0.9f, 0.5f)
@@ -518,7 +519,10 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         canvas.save()
         canvas.scale(fit.scale, fit.scale)
         val a = activity
-        val desired = (if (anchorToCutout && fit.alignCamera) cameraX ?: width / 2f else width / 2f) + dp(fit.offsetX)
+        // Pills hang on the camera (plus the left/right fit offset); the expanded card is
+        // nearly screen-wide, so it centres on the screen instead of hanging off the camera.
+        val desired = if (presentation == Presentation.EXPANDED) width / 2f + dp(fit.offsetX) * 0.25f
+            else (if (anchorToCutout && fit.alignCamera) cameraX ?: width / 2f else width / 2f) + dp(fit.offsetX)
         val cx = IslandFit.center(width.toFloat(), widthS.value * fit.scale, desired, dp(4f)) / fit.scale
         val intro = introS.value.coerceIn(0f, 1f)
         val press = pressS.value
@@ -553,7 +557,7 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         actionHits.clear()
         if (ea > 0.01f) {
             // Nothing-inspired island stays monochrome; no coloured content glow.
-            val alpha = (((ea - 0.35f) / 0.65f).coerceIn(0f, 1f) * 255 * intro).toInt()
+            val alpha = (((ea - 0.45f) / 0.55f).coerceIn(0f, 1f) * 255 * intro).toInt()
             // Content rises and scales in slightly as the shape opens, like iOS.
             val lift = (1f - ea) * dp(10f)
             val sc = 0.94f + 0.06f * ea
@@ -574,7 +578,7 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
             barY = -1000f
         }
         if (ca > 0.01f && !liveTimer) {
-            val alpha = (((ca - 0.3f) / 0.7f).coerceIn(0f, 1f) * 255).toInt()
+            val alpha = (((ca - 0.42f) / 0.58f).coerceIn(0f, 1f) * 255).toInt()
             if (alpha > 2) {
                 // Compact glyphs slide in from the centre as the pill widens.
                 canvas.save()
@@ -734,8 +738,8 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         val right = rect.right - dp(12f)
         when (a.mode) {
             IslandMode.MUSIC -> {
-                // The bar covers the system status bar, so the compact music layout is
-                // shortened: artwork + wave on the left, time/network/battery on the right.
+                // Compact music keeps the status readout: artwork + wave on the left,
+                // time/network/battery on the right.
                 drawWave(canvas, l + s + dp(10f), cy, dp(20f), dp(14f), waveColor, a.isPlaying, alpha)
                 drawStatusCluster(canvas, right, cy, alpha, withTime = true)
             }
@@ -1353,9 +1357,9 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         private const val SHEEN_MS = 800L
         private const val INTRO_HOLD_MS = 190L
         private const val ROLL_MS = 320L
-        private const val SHAPE_K = 190f
-        private const val WIDTH_DAMP = 0.72f
-        private const val HEIGHT_DAMP = 0.8f
+        private const val SHAPE_K = 170f
+        private const val WIDTH_DAMP = 0.62f
+        private const val HEIGHT_DAMP = 0.68f
         private const val CONTENT_IN_K = 150f
         private const val CONTENT_OUT_K = 420f
     }
