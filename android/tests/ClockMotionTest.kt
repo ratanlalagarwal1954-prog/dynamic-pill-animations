@@ -11,6 +11,7 @@ fun main() {
     // Wallpaper theme colours must be opaque so accents read on the black island.
     check(IslandTheme(true, 0x00123456, 0x00ABCDEF).safe().accent == 0xFF123456.toInt())
     check(IslandTheme(true, 0x00123456, 0x00ABCDEF).safe().secondary == 0xFFABCDEF.toInt())
+    check(IslandTheme(true, 0x00123456, 0x00ABCDEF, 0x00111111).safe().base == 0xFF111111.toInt())
     check(IslandTheme().safe() == IslandTheme())
     // Compact and expanded islands cannot disappear past either edge on narrow phones.
     check(IslandFit.center(360f, 214f, 0f, 4f) == 111f)

@@ -79,17 +79,20 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         invalidate()
     }
 
-    // Wallpaper theme: the island stays monochrome, but accents (timer ring, waves,
-    // progress, supporting buttons) take the wallpaper's colours when enabled.
+    // Wallpaper theme: accents (timer ring, waves, progress, supporting buttons) take the
+    // wallpaper's colours when enabled, and the pill body itself becomes a very dark
+    // version of the wallpaper's main colour instead of plain black.
     private var accent = NothingStyle.red
     private var accentSoft = NothingStyle.muted
     private var waveColor = NothingStyle.foreground
+    private var baseColor = NothingStyle.background
 
     fun applyTheme(theme: IslandTheme) {
         val t = theme.safe()
         accent = if (t.enabled) t.accent else NothingStyle.red
         accentSoft = if (t.enabled) t.secondary else NothingStyle.muted
         waveColor = if (t.enabled) t.accent else NothingStyle.foreground
+        baseColor = if (t.enabled) t.base else NothingStyle.background
         invalidate()
     }
 
@@ -137,7 +140,8 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         if (!isAbsorbing) topS.target = baseTop
     }
 
-    // Shape. Softer, slower springs (~0.5s response) with a touch of bounce, like iOS.
+    // Shape. Soft springs (~0.5s response) with a generous bounce, like the iOS island
+    // (low stiffness, ~0.6 damping: the pill visibly overshoots and settles).
     private val widthS = Spring(dp(104f), SHAPE_K, WIDTH_DAMP, 0.5f)
     private val heightS = Spring(dp(32f), SHAPE_K, HEIGHT_DAMP, 0.5f)
     private val radiusS = Spring(dp(16f), SHAPE_K, 0.9f, 0.5f)
@@ -342,7 +346,8 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         widthS.stiffness = 150f; widthS.dampingRatio = 0.6f
         heightS.stiffness = 170f; heightS.dampingRatio = 0.72f
         radiusS.stiffness = 170f; radiusS.dampingRatio = 0.85f
-        widthS.target = spec.w; heightS.target = spec.h; radiusS.target = spec.r; topS.target = baseTop
+        widthS.target = spec.w; heightS.target = spec.h; radiusS.target = spec.r
+        topS.target = baseTop
         setContentTargets(presentation)
         sheenStart = SystemClock.uptimeMillis() + 300L
         settled = false
@@ -359,7 +364,8 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
 
     /** Pixel size the overlay window needs for the current target state. */
     fun windowSizeFor(next: LiveActivity?, p: Presentation): Pair<Int, Int> {
-        val spec = specFor(if (next == null) Presentation.IDLE else p, next)
+        val effective = if (next == null) Presentation.IDLE else p
+        val spec = specFor(effective, next)
         // A fixed horizontal origin avoids one-frame jumps when WindowManager relayouts.
         // Keep the bottom slack tiny: the window eats touches wherever it covers, so a tall
         // idle window would deaden a strip of the screen under the island.
@@ -372,15 +378,17 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
 
     private data class Spec(val w: Float, val h: Float, val r: Float)
 
-    private fun expandedWidth() = min((resources.displayMetrics.widthPixels - dp(16f)) / fit.scale, dp(372f))
+    /** Expanded cards cover the whole screen width, minus a small margin on each side. */
+    private fun expandedWidth() = (resources.displayMetrics.widthPixels - dp(16f)) / fit.scale
 
     private fun visibleActions(a: LiveActivity) = a.actions.take(3)
 
     private fun specFor(p: Presentation, a: LiveActivity?): Spec {
         val maxWidth = (resources.displayMetrics.widthPixels - dp(16f)) / fit.scale
-        // Idle = mini status bar, wide enough for time | camera | network + battery.
-        if (p == Presentation.IDLE || a == null) return Spec(min(dp(176f) * fit.pillWidth, maxWidth), dp(30f), dp(15f))
-        if (p == Presentation.COMPACT) return Spec(min(dp(214f) * fit.pillWidth, maxWidth), dp(34f), dp(17f))
+        // Idle and compact are floating pills around the camera, like iOS. The pill-width
+        // fit slider sizes them; the island draws its own time, network and battery inside.
+        if (p == Presentation.IDLE || a == null) return Spec(min(dp(200f) * fit.pillWidth, maxWidth), dp(32f), dp(16f))
+        if (p == Presentation.COMPACT) return Spec(min(dp(232f) * fit.pillWidth, maxWidth), dp(36f), dp(18f))
         val w = expandedWidth()
         return when (a.mode) {
             IslandMode.MUSIC -> Spec(w, dp(178f), dp(46f))
@@ -511,7 +519,10 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         canvas.save()
         canvas.scale(fit.scale, fit.scale)
         val a = activity
-        val desired = (if (anchorToCutout && fit.alignCamera) cameraX ?: width / 2f else width / 2f) + dp(fit.offsetX)
+        // Pills hang on the camera (plus the left/right fit offset); the expanded card is
+        // nearly screen-wide, so it centres on the screen instead of hanging off the camera.
+        val desired = if (presentation == Presentation.EXPANDED) width / 2f + dp(fit.offsetX) * 0.25f
+            else (if (anchorToCutout && fit.alignCamera) cameraX ?: width / 2f else width / 2f) + dp(fit.offsetX)
         val cx = IslandFit.center(width.toFloat(), widthS.value * fit.scale, desired, dp(4f)) / fit.scale
         val intro = introS.value.coerceIn(0f, 1f)
         val press = pressS.value
@@ -524,6 +535,7 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         val r = min(radiusS.value * press, h / 2f)
         val absorb = absorbS.value.coerceIn(0f, 1f)
 
+        shapePaint.color = baseColor
         shapePaint.alpha = (255 * (1f - absorb * 0.3f) * min(1f, intro * 2.5f)).toInt()
         canvas.drawRoundRect(rect, r, r, shapePaint)
         drawSheen(canvas, r)
@@ -545,7 +557,7 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         actionHits.clear()
         if (ea > 0.01f) {
             // Nothing-inspired island stays monochrome; no coloured content glow.
-            val alpha = (((ea - 0.35f) / 0.65f).coerceIn(0f, 1f) * 255 * intro).toInt()
+            val alpha = (((ea - 0.45f) / 0.55f).coerceIn(0f, 1f) * 255 * intro).toInt()
             // Content rises and scales in slightly as the shape opens, like iOS.
             val lift = (1f - ea) * dp(10f)
             val sc = 0.94f + 0.06f * ea
@@ -566,7 +578,7 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
             barY = -1000f
         }
         if (ca > 0.01f && !liveTimer) {
-            val alpha = (((ca - 0.3f) / 0.7f).coerceIn(0f, 1f) * 255).toInt()
+            val alpha = (((ca - 0.42f) / 0.58f).coerceIn(0f, 1f) * 255).toInt()
             if (alpha > 2) {
                 // Compact glyphs slide in from the centre as the pill widens.
                 canvas.save()
@@ -583,7 +595,7 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         if (layered) canvas.restore()
     }
 
-    /** Idle island as a mini status bar: time on the left, network and battery on the right. */
+    /** Idle island as a status bar: time on the left, network and battery on the right. */
     private fun drawStatus(canvas: Canvas, alpha: Int, t: Float) {
         val s = status
         val cy = rect.centerY()
@@ -593,8 +605,18 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
             statusPaint.color = withAlpha(NothingStyle.foreground, alpha)
             canvas.drawText(s.time, rect.left + inset, cy + statusPaint.textSize * 0.36f, statusPaint)
         }
+        drawStatusCluster(canvas, rect.right - inset, cy, alpha)
+    }
+
+    /**
+     * Battery + network (and optionally the time), right-aligned at [rightEdge].
+     * Shared by the idle pill and the compact music pill, which shortens its music
+     * content to make room for this readout. Returns the left edge of what was drawn.
+     */
+    private fun drawStatusCluster(canvas: Canvas, rightEdge: Float, cy: Float, alpha: Int, withTime: Boolean = false): Float {
+        val s = status
         // Battery: outline, cap, level fill.
-        var right = rect.right - inset
+        var right = rightEdge
         if (s.battery >= 0) {
             val bw = dp(21f); val bh = dp(10.5f)
             val l = right - bw - dp(2f)
@@ -614,7 +636,7 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
             fillPaint.color = withAlpha(color, alpha)
             val pad = dp(2.1f)
             canvas.drawRoundRect(l + pad, cy - bh / 2f + pad, l + pad + (bw - pad * 2) * max(0.08f, level), cy + bh / 2f - pad, dp(1.5f), dp(1.5f), fillPaint)
-            if (s.charging) drawBolt(canvas, l + bw / 2f, cy, dp(8f), withAlpha(NothingStyle.background, alpha))
+            if (s.charging) drawBolt(canvas, l + bw / 2f, cy, dp(8f), withAlpha(baseColor, alpha))
             right = l - dp(7f)
         }
         // Network: wifi fan or four signal bars; a dim "x" style empty bars when offline.
@@ -630,6 +652,7 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
             }
             fillPaint.color = withAlpha(NothingStyle.foreground, alpha)
             canvas.drawCircle(ox, oy - dp(0.4f), dp(1.3f), fillPaint)
+            right -= dp(24f)
         } else {
             val bw = dp(2.6f); val gap = dp(1.5f)
             for (i in 0 until 4) {
@@ -638,7 +661,15 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
                 fillPaint.color = withAlpha(if (s.bars > i) NothingStyle.foreground else NothingStyle.line, alpha)
                 canvas.drawRoundRect(l, cy + dp(5f) - bh, l + bw, cy + dp(5f), dp(1f), dp(1f), fillPaint)
             }
+            right -= 4 * (bw + gap) + dp(7f)
         }
+        if (withTime && s.time.isNotEmpty()) {
+            statusPaint.color = withAlpha(NothingStyle.foreground, alpha)
+            val w = statusPaint.measureText(s.time)
+            canvas.drawText(s.time, right - w, cy + statusPaint.textSize * 0.36f, statusPaint)
+            right -= w + dp(10f)
+        }
+        return right
     }
 
     /** Soft wash of the app's colour (WhatsApp green, Spotify green, YouTube red...). */
@@ -706,7 +737,12 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         }
         val right = rect.right - dp(12f)
         when (a.mode) {
-            IslandMode.MUSIC -> drawWave(canvas, right - dp(20f), cy, dp(20f), dp(14f), waveColor, a.isPlaying, alpha)
+            IslandMode.MUSIC -> {
+                // Compact music keeps the status readout: artwork + wave on the left,
+                // time/network/battery on the right.
+                drawWave(canvas, l + s + dp(10f), cy, dp(20f), dp(14f), waveColor, a.isPlaying, alpha)
+                drawStatusCluster(canvas, right, cy, alpha, withTime = true)
+            }
             IslandMode.CALL -> {
                 val t = a.chronometerText()
                 if (t != null) text(canvas, t, right, cy + dp(4.5f), dp(80f), smallPaint, NothingStyle.muted, alpha, alignRight = true)
@@ -994,7 +1030,7 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
             val b = size * 0.42f
             val bx = l + size - b * 0.8f
             val by = t + size - b * 0.8f
-            fillPaint.color = withAlpha(Color.BLACK, alpha)
+            fillPaint.color = withAlpha(baseColor, alpha)
             canvas.drawCircle(bx + b / 2, by + b / 2, b / 2 + dp(2f), fillPaint)
             drawImage(canvas, icon, bx, by, b, b / 2, alpha)
         } else {
@@ -1321,9 +1357,9 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
         private const val SHEEN_MS = 800L
         private const val INTRO_HOLD_MS = 190L
         private const val ROLL_MS = 320L
-        private const val SHAPE_K = 190f
-        private const val WIDTH_DAMP = 0.72f
-        private const val HEIGHT_DAMP = 0.8f
+        private const val SHAPE_K = 170f
+        private const val WIDTH_DAMP = 0.62f
+        private const val HEIGHT_DAMP = 0.68f
         private const val CONTENT_IN_K = 150f
         private const val CONTENT_OUT_K = 420f
     }

@@ -24,12 +24,14 @@ object IslandPreferences {
             p.getBoolean("theme_on", false),
             p.getInt("theme_accent", 0xFFEB3030.toInt()),
             p.getInt("theme_secondary", 0xFF9D9D9D.toInt()),
+            p.getInt("theme_base", 0xFF0D0D0D.toInt()),
         ).safe()
     }
 
     fun saveTheme(context: Context, theme: IslandTheme) {
         val t = theme.safe()
         prefs(context).edit().putBoolean("theme_on", t.enabled)
-            .putInt("theme_accent", t.accent).putInt("theme_secondary", t.secondary).apply()
+            .putInt("theme_accent", t.accent).putInt("theme_secondary", t.secondary)
+            .putInt("theme_base", t.base).apply()
     }
 }
