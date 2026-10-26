@@ -28,9 +28,12 @@ Native Kotlin Android implementation of the live-activity island.
 - `IslandAccessibilityService`: owns no logic and reads no screen content; it only lets the island use an accessibility overlay, which sits above the status bar so taps at the top reach the island instead of opening the notification shade. Without it the island falls back to a normal overlay.
 - `IslandView`: native Canvas rendering with compact/expanded morphing, album art, animated playback progress, and tap targets for previous, play/pause, next, and seeking.
 
-The compact overlay only occupies the island's small touch bounds. It temporarily
-grows for an expanded activity, automatically collapses after a few seconds, and
-passes touches outside its bounds to the app underneath. Tapping an expanded
+The idle and compact island is a full-width bar flush with the top of the screen,
+covering the system status bar and drawing its own time, network and battery readout
+(with the music layout shortened to make room for it). When the wallpaper theme is
+enabled, the bar's body takes a very dark version of the wallpaper's main colour. It
+temporarily grows for an expanded activity, automatically collapses after a few
+seconds, and the idle bar lets touches fall through to the app underneath. Tapping an expanded
 activity opens its source notification; action buttons invoke actions exposed by
 that notification. Music controls use the active media session when the source
 app exposes one, with notification-action labels as a fallback. Album art is

@@ -4,12 +4,14 @@ import android.app.WallpaperManager
 import android.content.Context
 import android.graphics.Bitmap
 import android.os.Build
+import androidx.core.graphics.ColorUtils
 import androidx.core.graphics.drawable.toBitmap
 import androidx.palette.graphics.Palette
 
 /**
  * Pulls the main colours out of the user's wallpaper (or a picked image) so the island
- * can tint its accents to match. Reading the current wallpaper needs no permission.
+ * can tint its accents — and the pill body itself — to match. Reading the current
+ * wallpaper needs no permission.
  */
 object WallpaperTheme {
 
@@ -21,7 +23,7 @@ object WallpaperTheme {
                 val primary = colors.primaryColor?.toArgb()
                 if (primary != null) {
                     val secondary = colors.secondaryColor?.toArgb() ?: colors.tertiaryColor?.toArgb() ?: primary
-                    return IslandTheme(true, AppStyle.readable(primary), AppStyle.readable(secondary))
+                    return IslandTheme(true, AppStyle.readable(primary), AppStyle.readable(secondary), darken(primary))
                 }
             }
         }
@@ -37,6 +39,15 @@ object WallpaperTheme {
             ?: return null
         val secondary = (palette.mutedSwatch ?: palette.lightMutedSwatch ?: palette.dominantSwatch)?.rgb
             ?: accent
-        return IslandTheme(true, AppStyle.readable(accent), AppStyle.readable(secondary))
+        return IslandTheme(true, AppStyle.readable(accent), AppStyle.readable(secondary), darken(accent))
+    }
+
+    /** Very dark version of a wallpaper colour: the pill carries the hue but text stays readable. */
+    fun darken(color: Int): Int {
+        val hsl = FloatArray(3)
+        ColorUtils.colorToHSL(color, hsl)
+        hsl[1] = (hsl[1] * 0.7f).coerceIn(0f, 1f)
+        hsl[2] = hsl[2].coerceIn(0.06f, 0.13f)
+        return ColorUtils.HSLToColor(hsl)
     }
 }
