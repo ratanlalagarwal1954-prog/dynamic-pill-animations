@@ -610,7 +610,7 @@ class IslandView(context: Context) : View(context), Choreographer.FrameCallback 
 
     /**
      * Battery + network (and optionally the time), right-aligned at [rightEdge].
-     * Shared by the idle bar and the compact music bar, which shortens its music
+     * Shared by the idle pill and the compact music pill, which shortens its music
      * content to make room for this readout. Returns the left edge of what was drawn.
      */
     private fun drawStatusCluster(canvas: Canvas, rightEdge: Float, cy: Float, alpha: Int, withTime: Boolean = false): Float {
